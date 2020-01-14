@@ -1,0 +1,9 @@
+[package]
+name = "osm-addresses"
+version = "0.1.0"
+authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+osmpbfreader = "0.13"
+rusqlite = "0.20"
