@@ -37,7 +37,6 @@ class SQLite:
             number TEXT,
             street TEXT NOT NULL,
             unit TEXT,
-            place TEXT,
             city TEXT,
             district TEXT,
             region TEXT,
@@ -51,7 +50,6 @@ class SQLite:
             number TEXT,
             street TEXT,
             unit TEXT,
-            place TEXT,
             city TEXT,
             district TEXT,
             region TEXT,
@@ -65,8 +63,8 @@ class SQLite:
             if len(addr.city) == 0 and len(addr.street) == 0:
                 return
             self.cursor.execute(
-                "INSERT INTO addresses VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (addr.lat, addr.lon, addr.number, addr.street, addr.unit, None, addr.city,
+                "INSERT INTO addresses VALUES (?,?,?,?,?,?,?,?,?)",
+                (addr.lat, addr.lon, addr.number, addr.street, addr.unit, addr.city,
                  addr.district, addr.region, addr.postcode)
             )
             self.commit()
@@ -81,8 +79,8 @@ class SQLite:
             else:
                 import pdb;pdb.set_trace()
             self.cursor.execute(
-                "INSERT INTO addresses_errors VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (addr.lat, addr.lon, addr.number, addr.street, addr.unit, None, addr.city,
+                "INSERT INTO addresses_errors VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (addr.lat, addr.lon, addr.number, addr.street, addr.unit, addr.city,
                  addr.district, addr.region, addr.postcode, kind)
             )
             self.commit()

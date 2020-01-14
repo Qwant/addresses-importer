@@ -26,7 +26,6 @@ impl Address {
             number,
             street,
             unit,
-            place,
             city,
             district,
             region,
@@ -73,10 +72,9 @@ impl DB {
             r#"CREATE TABLE addresses(
                 lat REAL NOT NULL,
                 lon REAL NOT NULL,
-                number TEXT NOT NULL,
-                street TEXT,
+                number TEXT,
+                street TEXT NOT NULL,
                 unit TEXT,
-                place TEXT,
                 city TEXT,
                 district TEXT,
                 region TEXT,
@@ -89,10 +87,9 @@ impl DB {
             r#"CREATE TABLE addresses_errors(
                 lat REAL,
                 lon REAL,
-                number TEXT NOT NULL,
+                number TEXT,
                 street TEXT,
                 unit TEXT,
-                place TEXT,
                 city TEXT,
                 district TEXT,
                 region TEXT,
@@ -120,12 +117,11 @@ impl DB {
                     number,
                     street,
                     unit,
-                    place,
                     city,
                     district,
                     region,
                     postcode
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
             ).expect("failed to prepare statement");
 
             self.buffer.drain(..).filter_map(|obj| {
@@ -135,7 +131,6 @@ impl DB {
                     &obj.number,
                     &obj.street,
                     &obj.unit,
-                    &obj.place,
                     &obj.city,
                     &obj.district,
                     &obj.region,
@@ -155,13 +150,12 @@ impl DB {
                     number,
                     street,
                     unit,
-                    place,
                     city,
                     district,
                     region,
                     postcode,
                     kind
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
             ).expect("failed to prepare error statement");
 
             for (obj, err) in errors.drain(..) {
@@ -171,7 +165,6 @@ impl DB {
                     &obj.number,
                     &obj.street,
                     &obj.unit,
-                    &obj.place,
                     &obj.city,
                     &obj.district,
                     &obj.region,
@@ -240,7 +233,7 @@ fn main() {
     let mut reader = OsmPbfReader::new(
         File::open(&args[1]).expect(&format!("Failed to open file `{}`", args[1])),
     );
-    let mut db = DB::new("osm_addresses.db", 100).expect("failed to create DB");
+    let mut db = DB::new("addresses.db", 100).expect("failed to create DB");
     for obj in reader.iter().filter_map(|o| match o {
         Ok(OsmObj::Node(o)) if o.tags.iter().any(|x| x.0.contains("addr:")) => Some(o),
         _ => None,
