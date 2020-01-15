@@ -23,13 +23,13 @@ impl Address {
         let mut addr = Address {
             lat: node.lat(),
             lon: node.lon(),
-            number,
-            street,
-            unit,
-            city,
-            district,
-            region,
-            postcode,
+            number: None,
+            street: None,
+            unit: None,
+            city: None,
+            district: None,
+            region: None,
+            postcode: None,
         };
 
         for (tag, value) in node.tags.iter() {
