@@ -41,7 +41,7 @@ class SQLite:
             district TEXT,
             region TEXT,
             postcode TEXT,
-            PRIMARY KEY (lat, lon, number, street, city, place)
+            PRIMARY KEY (lat, lon, number, street, city)
         )""")
         self.cursor.execute("""
         CREATE TABLE addresses_errors(
