@@ -1,0 +1,10 @@
+[package]
+name = "deduplicator"
+version = "0.1.0"
+authors = ["Rémi Dupré <r.dupre@qwant.com>"]
+edition = "2018"
+
+[dependencies]
+rpostal = { git = "https://github.com/GuillaumeGomez/libpostal-rs.git" }
+rusqlite = "0.20"
+structopt = { version = "0.3", default-features = false }
