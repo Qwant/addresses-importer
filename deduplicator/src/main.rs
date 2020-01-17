@@ -6,12 +6,15 @@ mod address;
 mod address_hasher;
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, ToSql, NO_PARAMS};
 use structopt::StructOpt;
 
 use address::Address;
 use address_hasher::AddressHasher;
+
+const DEBUG_DELAY: u64 = 10;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -30,25 +33,23 @@ struct Params {
 
 fn import_source(output_conn: &Connection, input_path: &PathBuf) -> rusqlite::Result<()> {
     // Prepare output database
-    let mut output_address_stmt = output_conn
-        .prepare(
-            "INSERT INTO addresses(
-                lat,
-                lon,
-                number,
-                street,
-                unit,
-                city,
-                district,
-                region,
-                postcode
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        )
-        .unwrap_or_else(|e| panic!("failed to prepare transation: {}", e));
 
-    let mut output_hash_stmt = output_conn
-        .prepare("INSERT INTO addresses_hashes(address, hash) VALUES (?1, ?2)")
-        .unwrap_or_else(|e| panic!("failed to prepare transation: {}", e));
+    let mut output_address_stmt = output_conn.prepare(
+        "INSERT INTO addresses(
+            lat,
+            lon,
+            number,
+            street,
+            unit,
+            city,
+            district,
+            region,
+            postcode
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
+    )?;
+
+    let mut output_hash_stmt =
+        output_conn.prepare("INSERT INTO addresses_hashes(address, hash) VALUES (?1, ?2);")?;
 
     // Fetch addresses from file
     let input_conn = Connection::open(input_path)?;
@@ -67,42 +68,53 @@ fn import_source(output_conn: &Connection, input_path: &PathBuf) -> rusqlite::Re
         })
     })?;
 
+    // Init address hasher
     let rpostal_core = rpostal::Core::setup().expect("failed loading rpostal core");
     let rpostal_classifier = rpostal_core
         .setup_language_classifier()
         .expect("failed loading rpostal langage classifier");
     let address_hasher = AddressHasher::new(&rpostal_classifier);
 
-    for (i, address) in rows.enumerate() {
-        let address = address?;
-        output_address_stmt
-            .execute(&[
-                &address.lat as &dyn ToSql,
-                &address.lon,
-                &address.number,
-                &address.street,
-                &address.unit,
-                &address.city,
-                &address.district,
-                &address.region,
-                &address.postcode,
-            ])
-            .unwrap_or_else(|e| panic!("failed to insert address in outpout database: {}", e));
-        let address_rowid = output_conn.last_insert_rowid();
-        let hashes: Vec<_> = address_hasher.hash_address(&address).collect();
+    // Insert addresses
+    let mut last_display_index = 0;
+    let mut last_display_instant = Instant::now();
+    output_conn.execute_batch("BEGIN TRANSACTION;")?;
 
-        println!("Inserts {} hashes", hashes.len());
+    for (index, address) in rows.enumerate() {
+        let address = address?;
+
+        output_address_stmt.execute(&[
+            &address.lat as &dyn ToSql,
+            &address.lon,
+            &address.number,
+            &address.street,
+            &address.unit,
+            &address.city,
+            &address.district,
+            &address.region,
+            &address.postcode,
+        ])?;
+
+        let address_rowid = output_conn.last_insert_rowid();
+        let hashes = address_hasher.hash_address(&address);
 
         for hash in hashes {
-            output_hash_stmt
-                .execute(&[&address_rowid, &(hash as i64) as &dyn ToSql])
-                .unwrap_or_else(|e| panic!("failed to insert hash in output database: {}", e));
+            output_hash_stmt.execute(&[&address_rowid, &(hash as i64) as &dyn ToSql])?;
         }
 
-        if (i % 1000) == 0 {}
-        println!("{}", i);
+        if last_display_instant.elapsed() >= Duration::from_secs(DEBUG_DELAY) {
+            eprintln!(
+                "Processed {} addresses in {:?}",
+                index - last_display_index,
+                last_display_instant.elapsed()
+            );
+
+            last_display_instant = Instant::now();
+            last_display_index = index;
+        }
     }
 
+    output_conn.execute_batch("COMMIT TRANSACTION;")?;
     Ok(())
 }
 
