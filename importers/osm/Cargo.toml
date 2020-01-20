@@ -7,3 +7,10 @@ edition = "2018"
 [dependencies]
 osmpbfreader = "0.13"
 rusqlite = "0.20"
+
+[[bin]]
+name = "osm"
+path = "src/main.rs"
+
+[lib]
+name = "osm"
