@@ -111,7 +111,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openaddresse"
+name = "openaddresses"
 version = "0.1.0"
 dependencies = [
  "csv",
