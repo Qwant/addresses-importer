@@ -1,101 +1,47 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use rpostal;
-use rusqlite::{Connection, ToSql, NO_PARAMS};
+use rusqlite::Connection;
 
 use crate::address::Address;
+use crate::db_hashes::DbHashes;
 
-pub struct Dedupe {
-    output_conn: Connection,
+pub struct Dedupe<'c> {
+    db: DbHashes<'c>,
     rpostal_core: rpostal::Core,
 }
 
-impl Dedupe {
-    pub fn new(output_conn: &PathBuf) -> rusqlite::Result<Self> {
-        let output_conn = Connection::open(&output_conn)?;
-
-        output_conn.execute(
-            "CREATE TABLE IF NOT EXISTS addresses(
-                lat         REAL NOT NULL,
-                lon         REAL NOT NULL,
-                number      TEXT,
-                street      TEXT NOT NULL,
-                unit        TEXT,
-                city        TEXT,
-                district    TEXT,
-                region      TEXT,
-                postcode    TEXT,
-                PRIMARY KEY (lat, lon, number, street, city)
-            )",
-            NO_PARAMS,
-        )?;
-
-        output_conn.execute(
-            "CREATE TABLE IF NOT EXISTS addresses_hashes(
-                address     INTEGER NOT NULL,
-                hash        INTEGER NOT NULL
-            )",
-            NO_PARAMS,
-        )?;
-
+impl<'c> Dedupe<'c> {
+    pub fn new(output_conn: &'c Connection) -> rusqlite::Result<Self> {
         Ok(Self {
-            output_conn,
+            db: DbHashes::new(output_conn)?,
             rpostal_core: rpostal::Core::setup().expect("failed to init libpostal"),
         })
     }
 
-    pub fn load_addresses(&self, addresses: impl Iterator<Item = Address>) -> rusqlite::Result<()> {
+    pub fn load_addresses(
+        &mut self,
+        addresses: impl Iterator<Item = Address>,
+    ) -> rusqlite::Result<()> {
         // Init libpostal classifier
         let rpostal_classifier = self
             .rpostal_core
             .setup_language_classifier()
             .expect("failed loading langage classifier");
 
-        // Prepare output database
-        let mut output_address_stmt = self.output_conn.prepare(
-            "INSERT INTO addresses(
-                lat,
-                lon,
-                number,
-                street,
-                unit,
-                city,
-                district,
-                region,
-                postcode
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
-        )?;
-
-        let mut output_hash_stmt = self
-            .output_conn
-            .prepare("INSERT INTO addresses_hashes(address, hash) VALUES (?1, ?2);")?;
-
         // Insert addresses
         let mut last_display_index = 0;
         let mut last_display_instant = Instant::now();
-        self.output_conn.execute_batch("BEGIN TRANSACTION;")?;
+        self.db.begin_transaction()?;
 
         for (index, address) in addresses.enumerate() {
-            output_address_stmt.execute(&[
-                &address.lat as &dyn ToSql,
-                &address.lon,
-                &address.number,
-                &address.street,
-                &address.unit,
-                &address.city,
-                &address.district,
-                &address.region,
-                &address.postcode,
-            ])?;
-
-            let address_rowid = self.output_conn.last_insert_rowid();
+            let address_rowid = self.db.insert_address(&address)?;
             let hashes = hash_address(&rpostal_classifier, &address);
 
             for hash in hashes {
-                output_hash_stmt.execute(&[&address_rowid, &(hash as i64) as &dyn ToSql])?;
+                self.db.insert_hash(address_rowid, hash as i64)?;
             }
 
             if last_display_instant.elapsed() >= Duration::from_secs(10) {
@@ -110,34 +56,16 @@ impl Dedupe {
             }
         }
 
-        self.output_conn.execute_batch("COMMIT TRANSACTION;")?;
+        self.db.commit_transaction()?;
         Ok(())
     }
 
     pub fn remove_duplicate(&self) -> rusqlite::Result<()> {
         eprintln!("Query hash collisions");
 
-        let mut stmt = self.output_conn.prepare(
-            "
-                SELECT DISTINCT addr_1.rowid AS id_1, addr_2.rowid AS id_2
-                FROM addresses AS addr_1
-                JOIN addresses AS addr_2
-                JOIN addresses_hashes AS hash_1 ON addr_1.rowid = hash_1.address
-                JOIN addresses_hashes AS hash_2 ON addr_2.rowid = hash_2.address
-                WHERE
-                    id_1 < id_2 AND hash_1.hash = hash_2.hash;
-            ",
-        )?;
-
-        let feasible_duplicates = stmt
-            .query_map(NO_PARAMS, |row| Ok((row.get("id_1")?, row.get("id_2")?)))?
-            .map(|pair| {
-                pair.unwrap_or_else(|e| panic!("failed reading feasible duplicate: {:?}", e))
-            });
-
-        for dupe in feasible_duplicates {
-            let (x, y): (i64, i64) = dupe;
-            println!("{}, {}", x, y);
+        for collision in self.db.feasible_duplicates()?.iter()? {
+            let (addr_1, addr_2) = collision?;
+            println!("|||||\n{:?}\n{:?}", addr_1, addr_2);
         }
 
         Ok(())

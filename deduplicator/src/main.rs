@@ -2,7 +2,9 @@ extern crate rpostal;
 extern crate rusqlite;
 extern crate structopt;
 
+#[macro_use]
 mod address;
+mod db_hashes;
 mod dedupe;
 
 use std::path::PathBuf;
@@ -30,26 +32,15 @@ struct Params {
 fn main() -> rusqlite::Result<()> {
     let params = Params::from_args();
 
-    let mut deduplication = dedupe::Dedupe::new(&params.output)?;
+    let output_conn = Connection::open(&params.output)?;
+    let mut deduplication = dedupe::Dedupe::new(&output_conn)?;
 
     for path in &params.sources {
         let input_conn = Connection::open(path)?;
         let mut stmt = input_conn.prepare("SELECT * FROM addresses")?;
 
         let addresses = stmt
-            .query_map(NO_PARAMS, |row| {
-                Ok(Address {
-                    lat: row.get("lat")?,
-                    lon: row.get("lon")?,
-                    number: row.get("number")?,
-                    street: row.get("street")?,
-                    unit: row.get("unit")?,
-                    city: row.get("city")?,
-                    district: row.get("district")?,
-                    region: row.get("region")?,
-                    postcode: row.get("postcode")?,
-                })
-            })?
+            .query_map(NO_PARAMS, |row| Address::from_sqlite_row(&row))?
             .map(|addr| {
                 addr.unwrap_or_else(|e| panic!("failed to read address from source: {}", e))
             });
