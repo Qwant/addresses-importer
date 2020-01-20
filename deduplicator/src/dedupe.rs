@@ -1,4 +1,6 @@
+use std::cmp::min;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
@@ -60,12 +62,20 @@ impl<'c> Dedupe<'c> {
         Ok(())
     }
 
-    pub fn remove_duplicate(&self) -> rusqlite::Result<()> {
+    pub fn remove_duplicate(&mut self) -> rusqlite::Result<()> {
         eprintln!("Query hash collisions");
 
-        for collision in self.db.feasible_duplicates()?.iter()? {
-            let (addr_1, addr_2) = collision?;
-            println!("|||||\n{:?}\n{:?}", addr_1, addr_2);
+        let to_delete: HashSet<_> = self
+            .db
+            .feasible_duplicates()?
+            .iter()?
+            .map(|pair| pair.unwrap_or_else(|e| panic!("failed to retrieve duplicate: {}", e)))
+            .filter(|((_, _addr_1), (_, _addr_2))| true)
+            .map(|((id_1, _), (id_2, _))| min(id_1, id_2))
+            .collect();
+
+        for address_id in to_delete {
+            self.db.insert_to_delete(address_id)?;
         }
 
         Ok(())

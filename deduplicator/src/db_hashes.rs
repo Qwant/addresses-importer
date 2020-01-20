@@ -2,16 +2,21 @@ use rusqlite::{Connection, Statement, ToSql, NO_PARAMS};
 
 use crate::address::Address;
 
+const TABLE_ADDRESSES: &str = "addresses";
+const TABLE_HASHES: &str = "_addresses_hashes";
+const TABLE_TO_DELETE: &str = "_to_delete";
+
 pub struct DbHashes<'c> {
     conn: &'c Connection,
     stmt_insert_address: Statement<'c>,
     stmt_insert_hash: Statement<'c>,
+    stmt_insert_to_delete: Statement<'c>,
 }
 
 impl<'c> DbHashes<'c> {
     pub fn new(conn: &'c Connection) -> rusqlite::Result<Self> {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS addresses(
+        conn.execute_batch(&format!(
+            "CREATE TABLE IF NOT EXISTS {} (
                 lat         REAL NOT NULL,
                 lon         REAL NOT NULL,
                 number      TEXT,
@@ -23,21 +28,22 @@ impl<'c> DbHashes<'c> {
                 postcode    TEXT,
                 PRIMARY KEY (lat, lon, number, street, city)
             );
-            DELETE FROM addresses;",
-        )?;
 
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS addresses_hashes(
+            CREATE TABLE IF NOT EXISTS {} (
                 address     INTEGER NOT NULL,
                 hash        INTEGER NOT NULL
             );
-            DELETE FROM addresses_hashes;",
-        )?;
+
+            CREATE TABLE IF NOT EXISTS {} (
+                address_id  INTEGER NOT NULL
+            );",
+            TABLE_ADDRESSES, TABLE_HASHES, TABLE_TO_DELETE
+        ))?;
 
         Ok(Self {
             conn,
-            stmt_insert_address: conn.prepare(
-                "INSERT INTO addresses(
+            stmt_insert_address: conn.prepare(&format!(
+                "INSERT INTO {} (
                     lat,
                     lon,
                     number,
@@ -48,10 +54,16 @@ impl<'c> DbHashes<'c> {
                     region,
                     postcode
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
-            )?,
-
-            stmt_insert_hash: conn
-                .prepare("INSERT INTO addresses_hashes(address, hash) VALUES (?1, ?2);")?,
+                TABLE_ADDRESSES
+            ))?,
+            stmt_insert_hash: conn.prepare(&format!(
+                "INSERT INTO {} (address, hash) VALUES (?1, ?2);",
+                TABLE_HASHES
+            ))?,
+            stmt_insert_to_delete: conn.prepare(&format!(
+                "INSERT INTO {} (address_id) VALUES (?1);",
+                TABLE_TO_DELETE
+            ))?,
         })
     }
 
@@ -84,6 +96,11 @@ impl<'c> DbHashes<'c> {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn insert_to_delete(&mut self, to_delete_id: i64) -> rusqlite::Result<i64> {
+        self.stmt_insert_to_delete.execute(&[to_delete_id])?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
     pub fn feasible_duplicates(&self) -> rusqlite::Result<CollisionsIterable<'c>> {
         CollisionsIterable::prepare(&self.conn)
     }
@@ -93,7 +110,7 @@ pub struct CollisionsIterable<'c>(Statement<'c>);
 
 impl<'c> CollisionsIterable<'c> {
     pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
-        Ok(CollisionsIterable(conn.prepare(
+        Ok(CollisionsIterable(conn.prepare(&format!(
             "
                 SELECT DISTINCT
                     addr_1.rowid        AS addr_1_id,
@@ -116,13 +133,15 @@ impl<'c> CollisionsIterable<'c> {
                     addr_2.district     AS addr_2_district,
                     addr_2.region       AS addr_2_region,
                     addr_2.postcode     AS addr_2_postcode
-                FROM addresses AS addr_1
-                JOIN addresses AS addr_2
-                JOIN addresses_hashes AS hash_1 ON addr_1.rowid = hash_1.address
-                JOIN addresses_hashes AS hash_2 ON addr_2.rowid = hash_2.address
+                FROM {addresses} AS addr_1
+                JOIN {addresses} AS addr_2
+                JOIN {hashes} AS hash_1 ON addr_1.rowid = hash_1.address
+                JOIN {hashes} AS hash_2 ON addr_2.rowid = hash_2.address
                 WHERE addr_1.rowid < addr_2.rowid AND hash_1.hash = hash_2.hash;
             ",
-        )?))
+            addresses = TABLE_ADDRESSES,
+            hashes = TABLE_HASHES
+        ))?))
     }
 
     pub fn iter<'s>(
