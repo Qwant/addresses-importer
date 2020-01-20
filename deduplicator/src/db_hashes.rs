@@ -104,6 +104,24 @@ impl<'c> DbHashes<'c> {
     pub fn feasible_duplicates(&self) -> rusqlite::Result<CollisionsIterable<'c>> {
         CollisionsIterable::prepare(&self.conn)
     }
+
+    pub fn apply_addresses_to_delete(&self) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            &format!(
+                "DELETE FROM {} WHERE rowid IN (SELECT address_id FROM {});",
+                TABLE_ADDRESSES, TABLE_TO_DELETE
+            ),
+            NO_PARAMS,
+        )
+    }
+
+    pub fn cleanup_database(&self) -> rusqlite::Result<()> {
+        for db in [TABLE_HASHES, TABLE_TO_DELETE].into_iter() {
+            self.conn.execute_batch(&format!("DROP TABLE {};", db))?;
+        }
+
+        Ok(())
+    }
 }
 
 pub struct CollisionsIterable<'c>(Statement<'c>);

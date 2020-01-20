@@ -62,7 +62,7 @@ impl<'c> Dedupe<'c> {
         Ok(())
     }
 
-    pub fn remove_duplicate(&mut self) -> rusqlite::Result<()> {
+    pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
         eprintln!("Query hash collisions");
 
         let to_delete: HashSet<_> = self
@@ -78,6 +78,12 @@ impl<'c> Dedupe<'c> {
             self.db.insert_to_delete(address_id)?;
         }
 
+        Ok(())
+    }
+
+    pub fn apply_and_clean(&self) -> rusqlite::Result<()> {
+        self.db.apply_addresses_to_delete()?;
+        self.db.cleanup_database()?;
         Ok(())
     }
 }

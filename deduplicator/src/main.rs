@@ -48,7 +48,8 @@ fn main() -> rusqlite::Result<()> {
         deduplication.load_addresses(addresses)?;
     }
 
-    deduplication.remove_duplicate()?;
+    deduplication.compute_duplicates()?;
+    deduplication.apply_and_clean()?;
 
     println!("{:?}", params);
     Ok(())
