@@ -1,5 +1,5 @@
 [package]
-name = "openaddresse"
+name = "openaddresses"
 version = "0.1.0"
 authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
 edition = "2018"
@@ -7,3 +7,9 @@ edition = "2018"
 [dependencies]
 csv = "1.1"
 rusqlite = "0.20"
+
+[[bin]]
+name = "openaddresses"
+
+[lib]
+name = "openaddresses"
