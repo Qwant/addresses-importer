@@ -1,7 +1,9 @@
 use std::fs::{self, File};
 use std::path::Path;
 
-use osmpbfreader::objects::Node;
+use geos::Geometry;
+
+use osmpbfreader::objects::{Node, OsmId, Tags};
 use osmpbfreader::{OsmObj, OsmPbfReader};
 
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
@@ -19,10 +21,10 @@ struct Address {
 }
 
 impl Address {
-    fn new(node: Node) -> Address {
+    fn new(tags: &Tags, lat: f64, lon: f64) -> Address {
         let mut addr = Address {
-            lat: node.lat(),
-            lon: node.lon(),
+            lat,
+            lon,
             number: None,
             street: None,
             unit: None,
@@ -32,7 +34,7 @@ impl Address {
             postcode: None,
         };
 
-        for (tag, value) in node.tags.iter() {
+        for (tag, value) in tags.iter() {
             match tag.as_str() {
                 "addr:housenumber" => {
                     addr.number = Some(value.to_owned());
@@ -261,11 +263,62 @@ pub fn import_addresses<P: AsRef<Path>>(db_file_name: &str, pbf_file: P) -> DB {
         pbf_file.as_ref().display()
     )));
     let mut db = DB::new(db_file_name, 100).expect("failed to create DB");
-    for obj in reader.iter().filter_map(|o| match o {
-        Ok(OsmObj::Node(o)) if o.tags.iter().any(|x| x.0.contains("addr:")) => Some(o),
-        _ => None,
-    }) {
-        db.insert(Address::new(obj));
+    // for obj in reader.iter().filter_map(|o| match o {
+    //     Ok(OsmObj::Node(o)) if o.tags.iter().any(|x| x.0.contains("addr:")) => Some(o),
+    //     _ => None,
+    // }) {
+    //     db.insert(Address::new(obj));
+    // }
+    let objs = reader
+        .get_objs_and_deps(|o| match o {
+            OsmObj::Node(n) => n.tags.iter().filter(|x| x.0.contains("addr:")).count() > 1,
+            OsmObj::Way(w) => {
+                w.tags.iter().any(|x| x.0 == "addr:housenumber")
+                    && w.tags.iter().any(|x| x.0 == "addr:street")
+            }
+            _ => false,
+        })
+        .expect("failed to run get_objs_and_deps");
+    for (_, obj) in &objs {
+        match obj {
+            OsmObj::Node(n) => {
+                db.insert(Address::new(&n.tags, n.lat(), n.lon()));
+            }
+            OsmObj::Way(w) => {
+                let nodes: Vec<&Node> = w
+                    .nodes
+                    .iter()
+                    .filter_map(|id| match objs.get(&OsmId::Node(*id)) {
+                        Some(OsmObj::Node(n)) => Some(n),
+                        _ => None,
+                    })
+                    .collect();
+                if nodes.is_empty() {
+                    continue;
+                } else if nodes.len() == 1 {
+                    db.insert(Address::new(&w.tags, nodes[0].lat(), nodes[0].lon()));
+                    continue;
+                }
+                let polygon = format!(
+                    "POLYGON(({}))",
+                    nodes
+                        .into_iter()
+                        .map(|n| format!("{} {}", n.lon(), n.lat()))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                if let Ok(geom) = Geometry::new_from_wkt(&polygon).and_then(|g| g.get_centroid()) {
+                    let (lon, lat) = match (geom.get_x(), geom.get_y()) {
+                        (Ok(lon), Ok(lat)) => (lon, lat),
+                        _ => continue,
+                    };
+                    db.insert(Address::new(&w.tags, lat, lon));
+                } else {
+                    continue;
+                }
+            }
+            _ => {}
+        }
     }
     db.flush_buffer();
     db
