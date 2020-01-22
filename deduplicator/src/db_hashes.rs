@@ -75,6 +75,14 @@ impl<'c> DbHashes<'c> {
         self.conn.execute_batch("COMMIT TRANSACTION;")
     }
 
+    pub fn count_addresses(&self) -> rusqlite::Result<isize> {
+        self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM {};", TABLE_ADDRESSES),
+            NO_PARAMS,
+            |row: &rusqlite::Row| row.get(0),
+        )
+    }
+
     pub fn insert_address(&mut self, address: &Address) -> rusqlite::Result<i64> {
         self.stmt_insert_address.execute(&[
             &address.lat as &dyn ToSql,
@@ -176,7 +184,7 @@ impl<'c> CollisionsIterable<'c> {
                     address_from_sqlite_row_with_prefix!("addr_1_", row)?,
                 ),
                 (
-                    row.get("addr_1_id")?,
+                    row.get("addr_2_id")?,
                     address_from_sqlite_row_with_prefix!("addr_2_", row)?,
                 ),
             ))

@@ -5,6 +5,8 @@ authors = ["Rémi Dupré <r.dupre@qwant.com>"]
 edition = "2018"
 
 [dependencies]
+geo = "0.12.2"
 rpostal = { git = "https://github.com/GuillaumeGomez/libpostal-rs.git" }
+rprogress = { git = "https://github.com/remi-dupre/rprogress" }
 rusqlite = "0.20"
 structopt = { version = "0.3", default-features = false }

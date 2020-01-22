@@ -1,4 +1,6 @@
+extern crate geo;
 extern crate rpostal;
+extern crate rprogress;
 extern crate rusqlite;
 extern crate structopt;
 
@@ -6,9 +8,12 @@ extern crate structopt;
 mod address;
 mod db_hashes;
 mod dedupe;
+mod postal_wrappers;
 
+use std::convert::TryFrom;
 use std::path::PathBuf;
 
+use rprogress::prelude::*;
 use rusqlite::{Connection, NO_PARAMS};
 use structopt::StructOpt;
 
@@ -37,20 +42,28 @@ fn main() -> rusqlite::Result<()> {
 
     for path in &params.sources {
         let input_conn = Connection::open(path)?;
-        let mut stmt = input_conn.prepare("SELECT * FROM addresses")?;
+        let nb_addresses = usize::try_from(input_conn.query_row(
+            "SELECT COUNT(*) FROM addresses;",
+            NO_PARAMS,
+            |row| row.get(0).map(|x: isize| x),
+        )?)
+        .unwrap();
 
+        eprintln!("Importing {} addresses from {:?}", nb_addresses, path);
+
+        let mut stmt = input_conn.prepare("SELECT * FROM addresses")?;
         let addresses = stmt
             .query_map(NO_PARAMS, |row| Address::from_sqlite_row(&row))?
             .map(|addr| {
                 addr.unwrap_or_else(|e| panic!("failed to read address from source: {}", e))
-            });
+            })
+            .uprogress(nb_addresses)
+            .with_prefix(format!("Importing {:<60}", format!("{:?}", path)));
 
         deduplication.load_addresses(addresses)?;
     }
 
     deduplication.compute_duplicates()?;
     deduplication.apply_and_clean()?;
-
-    println!("{:?}", params);
     Ok(())
 }
