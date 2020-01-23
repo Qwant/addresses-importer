@@ -9,7 +9,6 @@ use geo::prelude::*;
 use geo::Point;
 use rayon::prelude::*;
 use rpostal;
-use rprogress::prelude::*;
 use rusqlite::DropBehavior;
 
 use crate::address::Address;
@@ -61,7 +60,7 @@ impl Dedupe {
                 tran.set_drop_behavior(DropBehavior::Commit);
                 let mut inserter = DbHashes::get_inserter(&mut tran).unwrap();
 
-                while let Ok((address, hashes)) = hash_receiver.recv() {
+                for (address, hashes) in hash_receiver {
                     if let Ok(addr_id) = inserter.insert_address(&address) {
                         for hash in hashes {
                             inserter.insert_hash(addr_id, hash as i64).unwrap();
@@ -102,18 +101,29 @@ impl Dedupe {
             .setup_language_classifier()
             .expect("failed to init libpostal classifier");
 
-        DbHashes::feasible_duplicates(&conn_get_collisions)?
-            .iter()?
-            .uprogress(0)
-            .with_prefix("Filter real duplicates:".to_string())
-            .map(|pair| pair.unwrap_or_else(|e| panic!("failed to retrieve duplicate: {}", e)))
-            .filter(|((_id_1, addr_1), (_id_2, addr_2))| {
-                is_duplicate(&rpostal_classifier, &addr_1, &addr_2)
-            })
-            .map(|((id_1, _addr_1), (id_2, _addr_2))| min(id_1, id_2))
-            .for_each(|id_to_delete| {
-                inserter.insert_to_delete(id_to_delete).unwrap();
-            });
+        let mut collisions = DbHashes::feasible_duplicates(&conn_get_collisions)?;
+        let mut collisions_iter = collisions.iter()?;
+
+        loop {
+            let batch: Vec<_> = (&mut collisions_iter).take(TRANSACTIONS_SIZE).collect();
+
+            if batch.is_empty() {
+                break;
+            }
+
+            let to_delete: Vec<_> = batch
+                .into_par_iter()
+                .map(|pair| pair.unwrap_or_else(|e| panic!("failed to retrieve duplicates: {}", e)))
+                .filter(|((_, addr_1), (_, addr_2))| {
+                    is_duplicate(&rpostal_classifier, &addr_1, &addr_2)
+                })
+                .map(|((id_1, _), (id_2, _))| min(id_1, id_2))
+                .collect();
+
+            for id in to_delete {
+                inserter.insert_to_delete(id)?;
+            }
+        }
 
         Ok(())
     }
