@@ -1,13 +1,15 @@
 use std::cmp::min;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::mem;
+use std::path::PathBuf;
 
 use geo::prelude::*;
 use geo::Point;
+use rayon::prelude::*;
 use rpostal;
 use rprogress::prelude::*;
-use rusqlite::Connection;
+use rusqlite::DropBehavior;
 
 use crate::address::Address;
 use crate::db_hashes::DbHashes;
@@ -18,15 +20,15 @@ use crate::postal_wrappers::{
 
 const TRANSACTIONS_SIZE: usize = 1_000_000;
 
-pub struct Dedupe<'c> {
-    db: DbHashes<'c>,
+pub struct Dedupe {
+    db: DbHashes,
     rpostal_core: rpostal::Core,
 }
 
-impl<'c> Dedupe<'c> {
-    pub fn new(output_conn: &'c Connection) -> rusqlite::Result<Self> {
+impl Dedupe {
+    pub fn new(output_path: PathBuf) -> rusqlite::Result<Self> {
         Ok(Self {
-            db: DbHashes::new(output_conn)?,
+            db: DbHashes::new(output_path)?,
             rpostal_core: rpostal::Core::setup().expect("failed to init libpostal"),
         })
     }
@@ -41,43 +43,64 @@ impl<'c> Dedupe<'c> {
             .setup_language_classifier()
             .expect("failed loading langage classifier");
 
-        // Insert addresses
-        self.db.begin_transaction()?;
+        // Collect addresses into batches of size `TRANSACTIONS_SIZE`
+        let addresses = addresses
+            .scan(Vec::new(), |acc, address| {
+                Some({
+                    if acc.len() == TRANSACTIONS_SIZE {
+                        println!();
+                        Some(mem::replace(acc, vec![address]))
+                    } else {
+                        acc.push(address);
+                        None
+                    }
+                })
+            })
+            .filter_map(|x| x);
 
-        let mut nb_new_addresses = 0;
-        let mut nb_old_addresses = 0;
+        // Compute hashes for each batch
+        let addresses_with_hashes = addresses.map(|address_batch| {
+            address_batch
+                .into_par_iter()
+                .map(|address| {
+                    let hashes: Vec<_> = hash_address(&rpostal_classifier, &address).collect();
+                    (address, hashes)
+                })
+                .collect::<Vec<_>>()
+        });
 
-        for (i, address) in addresses.enumerate() {
-            if i % TRANSACTIONS_SIZE == 0 {
-                self.db.commit_transaction()?;
-                self.db.begin_transaction()?;
-            }
+        // Write batches to output DB
+        let mut conn = self.db.get_conn();
 
-            let row_id = match self.db.insert_address(&address) {
-                Ok(address) => {
-                    nb_new_addresses += 1;
-                    address
+        for batch in addresses_with_hashes {
+            let mut tran = conn.transaction()?;
+            tran.set_drop_behavior(DropBehavior::Commit);
+            let mut inserter = DbHashes::get_inserter(&mut tran)?;
+
+            for (address, hashes) in batch
+                .into_iter()
+                .progress()
+                .with_prefix(" -> writing output DB ... ".to_string())
+            {
+                if let Ok(addr_id) = inserter.insert_address(&address) {
+                    for hash in hashes {
+                        inserter.insert_hash(addr_id, hash as i64)?;
+                    }
                 }
-                Err(_) => {
-                    nb_old_addresses += 1;
-                    continue;
-                }
-            };
-
-            for hash in hash_address(&rpostal_classifier, &address) {
-                self.db.insert_hash(row_id, hash as i64)?;
             }
         }
 
-        self.db.commit_transaction()?;
-        eprintln!(
-            "Imported {} new addresses, skipped {}",
-            nb_new_addresses, nb_old_addresses
-        );
         Ok(())
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
+        let conn_get_collisions = self.db.get_conn();
+
+        let mut conn_insert = self.db.get_conn();
+        let mut tran_insert = conn_insert.transaction()?;
+        tran_insert.set_drop_behavior(DropBehavior::Commit);
+        let mut inserter = DbHashes::get_inserter(&mut tran_insert)?;
+
         let count_addresses_before = self.db.count_addresses()?;
         eprintln!(
             "Query SQLite for hash collisions ({} addresses)",
@@ -89,38 +112,18 @@ impl<'c> Dedupe<'c> {
             .setup_language_classifier()
             .expect("failed to init libpostal classifier");
 
-        let to_delete: HashSet<_> = self
-            .db
-            .feasible_duplicates()?
+        DbHashes::feasible_duplicates(&conn_get_collisions)?
             .iter()?
+            .uprogress(0)
+            .with_prefix("Filter real duplicates:".to_string())
             .map(|pair| pair.unwrap_or_else(|e| panic!("failed to retrieve duplicate: {}", e)))
             .filter(|((_id_1, addr_1), (_id_2, addr_2))| {
                 is_duplicate(&rpostal_classifier, &addr_1, &addr_2)
             })
-            // .inspect(|((id_1, addr_1), (id_2, addr_2))| {
-            //     eprintln!("--- {}, {}\n{:?}\n{:?}", id_1, id_2, addr_1, addr_2)
-            // })
             .map(|((id_1, _addr_1), (id_2, _addr_2))| min(id_1, id_2))
-            .uprogress(0)
-            .with_prefix("Filter real duplicates:".to_string())
-            .collect();
-
-        eprintln!(
-            "{}/{} ({:.1}%) addresses will be delete",
-            to_delete.len(),
-            count_addresses_before,
-            to_delete.len() as f32 / count_addresses_before as f32
-        );
-
-        self.db.begin_transaction()?;
-        for address_id in to_delete
-            .into_iter()
-            .progress()
-            .with_prefix("Register addresses to be deleted:".to_string())
-        {
-            self.db.insert_to_delete(address_id)?;
-        }
-        self.db.commit_transaction()?;
+            .for_each(|id_to_delete| {
+                inserter.insert_to_delete(id_to_delete).unwrap();
+            });
 
         Ok(())
     }

@@ -1,4 +1,8 @@
-use rusqlite::{Connection, Statement, ToSql, NO_PARAMS};
+use std::path::PathBuf;
+
+use r2d2::{Pool, PooledConnection};
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
 
 use crate::address::Address;
 
@@ -6,16 +10,23 @@ const TABLE_ADDRESSES: &str = "addresses";
 const TABLE_HASHES: &str = "_addresses_hashes";
 const TABLE_TO_DELETE: &str = "_to_delete";
 
-pub struct DbHashes<'c> {
-    conn: &'c Connection,
-    stmt_insert_address: Statement<'c>,
-    stmt_insert_hash: Statement<'c>,
-    stmt_insert_to_delete: Statement<'c>,
+//  ____  _     _   _           _
+// |  _ \| |__ | | | | __ _ ___| |__   ___  ___
+// | | | | '_ \| |_| |/ _` / __| '_ \ / _ \/ __|
+// | |_| | |_) |  _  | (_| \__ \ | | |  __/\__ \
+// |____/|_.__/|_| |_|\__,_|___/_| |_|\___||___/
+//
+
+pub struct DbHashes {
+    pool: Pool<SqliteConnectionManager>,
 }
 
-impl<'c> DbHashes<'c> {
-    pub fn new(conn: &'c Connection) -> rusqlite::Result<Self> {
-        conn.execute_batch(&format!(
+impl DbHashes {
+    pub fn new(db_path: PathBuf) -> rusqlite::Result<Self> {
+        let manager = SqliteConnectionManager::file(db_path);
+        let pool = r2d2::Pool::builder().build(manager).unwrap();
+
+        pool.get().unwrap().execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS {} (
                 lat         REAL NOT NULL,
                 lon         REAL NOT NULL,
@@ -40,47 +51,101 @@ impl<'c> DbHashes<'c> {
             TABLE_ADDRESSES, TABLE_HASHES, TABLE_TO_DELETE
         ))?;
 
-        Ok(Self {
-            conn,
-            stmt_insert_address: conn.prepare(&format!(
-                "INSERT INTO {} (
-                    lat,
-                    lon,
-                    number,
-                    street,
-                    unit,
-                    city,
-                    district,
-                    region,
-                    postcode
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
-                TABLE_ADDRESSES
-            ))?,
-            stmt_insert_hash: conn.prepare(&format!(
-                "INSERT INTO {} (address, hash) VALUES (?1, ?2);",
-                TABLE_HASHES
-            ))?,
-            stmt_insert_to_delete: conn.prepare(&format!(
-                "INSERT INTO {} (address_id) VALUES (?1);",
-                TABLE_TO_DELETE
-            ))?,
-        })
+        Ok(Self { pool })
     }
 
-    pub fn begin_transaction(&self) -> rusqlite::Result<()> {
-        self.conn.execute_batch("BEGIN TRANSACTION;")
-    }
-
-    pub fn commit_transaction(&self) -> rusqlite::Result<()> {
-        self.conn.execute_batch("COMMIT TRANSACTION;")
+    pub fn get_conn(&self) -> PooledConnection<SqliteConnectionManager> {
+        self.pool.get().unwrap()
     }
 
     pub fn count_addresses(&self) -> rusqlite::Result<isize> {
-        self.conn.query_row(
+        self.get_conn().query_row(
             &format!("SELECT COUNT(*) FROM {};", TABLE_ADDRESSES),
             NO_PARAMS,
             |row: &rusqlite::Row| row.get(0),
         )
+    }
+
+    pub fn get_inserter<'c, 't>(
+        tran: &'t mut Transaction<'c>,
+    ) -> rusqlite::Result<Inserter<'c, 't>> {
+        Inserter::new(tran)
+    }
+
+    pub fn feasible_duplicates<'c>(
+        conn: &'c PooledConnection<SqliteConnectionManager>,
+    ) -> rusqlite::Result<CollisionsIterable<'c>> {
+        CollisionsIterable::prepare(conn)
+    }
+
+    pub fn apply_addresses_to_delete(&self) -> rusqlite::Result<usize> {
+        self.get_conn().execute(
+            &format!(
+                "DELETE FROM {} WHERE rowid IN (SELECT address_id FROM {});",
+                TABLE_ADDRESSES, TABLE_TO_DELETE
+            ),
+            NO_PARAMS,
+        )
+    }
+
+    pub fn cleanup_database(&self) -> rusqlite::Result<()> {
+        let conn = self.get_conn();
+
+        for db in [TABLE_HASHES, TABLE_TO_DELETE].into_iter() {
+            conn.execute_batch(&format!("DROP TABLE {};", db))?;
+        }
+
+        Ok(())
+    }
+}
+
+//  ___                     _
+// |_ _|_ __  ___  ___ _ __| |_ ___ _ __
+//  | || '_ \/ __|/ _ \ '__| __/ _ \ '__|
+//  | || | | \__ \  __/ |  | ||  __/ |
+// |___|_| |_|___/\___|_|   \__\___|_|
+//
+
+pub struct Inserter<'c, 't> {
+    tran: &'t Transaction<'c>,
+    stmt_insert_address: Statement<'t>,
+    stmt_insert_hash: Statement<'t>,
+    stmt_insert_to_delete: Statement<'t>,
+}
+
+impl<'c, 't> Inserter<'c, 't> {
+    pub fn new(tran: &'t mut Transaction<'c>) -> rusqlite::Result<Self> {
+        let stmt_insert_address = tran.prepare(&format!(
+            "INSERT INTO {} (
+                lat,
+                lon,
+                number,
+                street,
+                unit,
+                city,
+                district,
+                region,
+                postcode
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
+            TABLE_ADDRESSES
+        ))?;
+
+        let stmt_insert_hash = tran.prepare(&format!(
+            "INSERT INTO {} (address, hash) VALUES (?1, ?2);",
+            TABLE_HASHES
+        ))?;
+
+        let stmt_insert_to_delete = tran.prepare(&format!(
+            "INSERT INTO {} (address_id) VALUES (?1);",
+            TABLE_TO_DELETE
+        ))?;
+
+        Ok(Self {
+            tran,
+            stmt_insert_address,
+            stmt_insert_hash,
+            stmt_insert_to_delete,
+        })
     }
 
     pub fn insert_address(&mut self, address: &Address) -> rusqlite::Result<i64> {
@@ -95,42 +160,27 @@ impl<'c> DbHashes<'c> {
             &address.region,
             &address.postcode,
         ])?;
-
-        Ok(self.conn.last_insert_rowid())
+        Ok(self.tran.last_insert_rowid())
     }
 
-    pub fn insert_hash(&mut self, address_id: i64, hash: i64) -> rusqlite::Result<i64> {
-        self.stmt_insert_hash.execute(&[address_id, hash])?;
-        Ok(self.conn.last_insert_rowid())
+    pub fn insert_hash(&mut self, address_id: i64, address_hash: i64) -> rusqlite::Result<i64> {
+        self.stmt_insert_hash.execute(&[address_id, address_hash])?;
+        Ok(self.tran.last_insert_rowid())
     }
 
-    pub fn insert_to_delete(&mut self, to_delete_id: i64) -> rusqlite::Result<i64> {
-        self.stmt_insert_to_delete.execute(&[to_delete_id])?;
-        Ok(self.conn.last_insert_rowid())
-    }
-
-    pub fn feasible_duplicates(&self) -> rusqlite::Result<CollisionsIterable<'c>> {
-        CollisionsIterable::prepare(&self.conn)
-    }
-
-    pub fn apply_addresses_to_delete(&self) -> rusqlite::Result<usize> {
-        self.conn.execute(
-            &format!(
-                "DELETE FROM {} WHERE rowid IN (SELECT address_id FROM {});",
-                TABLE_ADDRESSES, TABLE_TO_DELETE
-            ),
-            NO_PARAMS,
-        )
-    }
-
-    pub fn cleanup_database(&self) -> rusqlite::Result<()> {
-        for db in [TABLE_HASHES, TABLE_TO_DELETE].into_iter() {
-            self.conn.execute_batch(&format!("DROP TABLE {};", db))?;
-        }
-
-        Ok(())
+    pub fn insert_to_delete(&mut self, address_id: i64) -> rusqlite::Result<i64> {
+        self.stmt_insert_to_delete
+            .execute(std::iter::once(address_id))?;
+        Ok(self.tran.last_insert_rowid())
     }
 }
+
+//   ____      _ _ _     _                   ___ _
+//  / ___|___ | | (_)___(_) ___  _ __  ___  |_ _| |_ ___ _ __
+// | |   / _ \| | | / __| |/ _ \| '_ \/ __|  | || __/ _ \ '__|
+// | |__| (_) | | | \__ \ | (_) | | | \__ \  | || ||  __/ |
+//  \____\___/|_|_|_|___/_|\___/|_| |_|___/ |___|\__\___|_|
+//
 
 pub struct CollisionsIterable<'c>(Statement<'c>);
 

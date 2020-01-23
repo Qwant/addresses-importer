@@ -1,4 +1,7 @@
 extern crate geo;
+extern crate r2d2;
+extern crate r2d2_sqlite;
+extern crate rayon;
 extern crate rpostal;
 extern crate rprogress;
 extern crate rusqlite;
@@ -36,9 +39,7 @@ struct Params {
 
 fn main() -> rusqlite::Result<()> {
     let params = Params::from_args();
-
-    let output_conn = Connection::open(&params.output)?;
-    let mut deduplication = dedupe::Dedupe::new(&output_conn)?;
+    let mut deduplication = dedupe::Dedupe::new(params.output)?;
 
     for path in &params.sources {
         let input_conn = Connection::open(path)?;
