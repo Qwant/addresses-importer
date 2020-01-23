@@ -1,8 +1,9 @@
 use std::cmp::min;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::mem;
 use std::path::PathBuf;
+use std::sync::mpsc::sync_channel;
+use std::thread;
 
 use geo::prelude::*;
 use geo::Point;
@@ -35,7 +36,7 @@ impl Dedupe {
 
     pub fn load_addresses(
         &mut self,
-        addresses: impl Iterator<Item = Address>,
+        mut addresses: impl Iterator<Item = Address>,
     ) -> rusqlite::Result<()> {
         // Init libpostal classifier
         let rpostal_classifier = self
@@ -43,51 +44,40 @@ impl Dedupe {
             .setup_language_classifier()
             .expect("failed loading langage classifier");
 
-        // Collect addresses into batches of size `TRANSACTIONS_SIZE`
-        let addresses = addresses
-            .scan(Vec::new(), |acc, address| {
-                Some({
-                    if acc.len() == TRANSACTIONS_SIZE {
-                        println!();
-                        Some(mem::replace(acc, vec![address]))
-                    } else {
-                        acc.push(address);
-                        None
-                    }
-                })
-            })
-            .filter_map(|x| x);
+        loop {
+            // Collect a batch from the address database
+            let batch: Vec<_> = (&mut addresses).take(TRANSACTIONS_SIZE).collect();
 
-        // Compute hashes for each batch
-        let addresses_with_hashes = addresses.map(|address_batch| {
-            address_batch
-                .into_par_iter()
-                .map(|address| {
-                    let hashes: Vec<_> = hash_address(&rpostal_classifier, &address).collect();
-                    (address, hashes)
-                })
-                .collect::<Vec<_>>()
-        });
+            if batch.is_empty() {
+                break;
+            }
 
-        // Write batches to output DB
-        let mut conn = self.db.get_conn();
+            // Compute hashes
+            let (hash_sender, hash_receiver) = sync_channel(1000);
+            let mut conn = self.db.get_conn();
 
-        for batch in addresses_with_hashes {
-            let mut tran = conn.transaction()?;
-            tran.set_drop_behavior(DropBehavior::Commit);
-            let mut inserter = DbHashes::get_inserter(&mut tran)?;
+            let receive_thread = thread::spawn(move || {
+                let mut tran = conn.transaction().unwrap();
+                tran.set_drop_behavior(DropBehavior::Commit);
+                let mut inserter = DbHashes::get_inserter(&mut tran).unwrap();
 
-            for (address, hashes) in batch
-                .into_iter()
-                .progress()
-                .with_prefix(" -> writing output DB ... ".to_string())
-            {
-                if let Ok(addr_id) = inserter.insert_address(&address) {
-                    for hash in hashes {
-                        inserter.insert_hash(addr_id, hash as i64)?;
+                while let Ok((address, hashes)) = hash_receiver.recv() {
+                    if let Ok(addr_id) = inserter.insert_address(&address) {
+                        for hash in hashes {
+                            inserter.insert_hash(addr_id, hash as i64).unwrap();
+                        }
                     }
                 }
-            }
+            });
+
+            batch
+                .into_par_iter()
+                .for_each_with(hash_sender, |sender, address| {
+                    let hashes: Vec<_> = hash_address(&rpostal_classifier, &address).collect();
+                    sender.send((address, hashes)).unwrap();
+                });
+
+            receive_thread.join().unwrap();
         }
 
         Ok(())
