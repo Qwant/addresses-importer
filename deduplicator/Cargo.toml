@@ -5,11 +5,11 @@ authors = ["Rémi Dupré <r.dupre@qwant.com>"]
 edition = "2018"
 
 [dependencies]
-crossbeam = "0.7.3"
-geo = "0.12.2"
-geo-geojson = "0.1.0"
-lazy_static = "1.4.0"
-num_cpus = "1.12.0"
+crossbeam = "0.7"
+geo = "0.12"
+geo-geojson = "0.1"
+lazy_static = "1.4"
+num_cpus = "1.12"
 rpostal = { git = "https://github.com/GuillaumeGomez/libpostal-rs.git" }
 rprogress = { git = "https://github.com/remi-dupre/rprogress" }
 rusqlite = "0.21"

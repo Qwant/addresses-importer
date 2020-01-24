@@ -78,7 +78,8 @@ where
     let mut stmt = input_conn.prepare("SELECT * FROM addresses")?;
     let addresses = stmt
         .query_map(NO_PARAMS, |row| Address::from_sqlite_row(&row))?
-        .uprogress(nb_addresses)
+        .progress()
+        .with_iter_size(nb_addresses)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))
         .filter_map(|addr| {
             addr.map_err(|e| eprintln!("failed to read address from DB: {}", e))
