@@ -5,7 +5,7 @@ fn main() {
     if args.len() < 2 {
         eprintln!("Expected PBF file path");
     }
-    let db = osm::import_addresses("addresses.db", &args[1]);
+    let db = osm::import_addresses("addresses.db", &args[1], true);
     println!(
         "Got {} addresses in {} cities (and {} errors)",
         db.get_nb_addresses(),
