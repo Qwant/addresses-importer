@@ -25,8 +25,14 @@ impl DbHashes {
     pub fn new(db_path: PathBuf) -> rusqlite::Result<Self> {
         let manager = SqliteConnectionManager::file(db_path);
         let pool = r2d2::Pool::builder().build(manager).unwrap();
+        let conn = pool.get().unwrap();
 
-        pool.get().unwrap().execute_batch(&format!(
+        conn.pragma_update(None, "page_size", &4096)?;
+        conn.pragma_update(None, "cache_size", &10_000)?;
+        conn.pragma_update(None, "synchronous", &"NORMAL")?;
+        conn.pragma_update(None, "journal_mode", &"OFF")?;
+
+        conn.execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS {} (
                 lat         REAL NOT NULL,
                 lon         REAL NOT NULL,

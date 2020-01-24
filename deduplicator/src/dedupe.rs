@@ -1,12 +1,12 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::mem::drop;
 use std::path::PathBuf;
-use std::sync::mpsc::sync_channel;
 use std::thread;
 
+use crossbeam::channel;
 use geo::prelude::*;
 use geo::Point;
-use rayon::prelude::*;
 use rpostal;
 use rusqlite::DropBehavior;
 
@@ -17,121 +17,186 @@ use crate::postal_wrappers::{
     DuplicateStatus,
 };
 
-const TRANSACTIONS_SIZE: usize = 1_000_000;
+const CHANNEL_SIZES: usize = 1000;
+
+lazy_static! {
+    static ref POSTAL_CORE: rpostal::Core =
+        rpostal::Core::setup().expect("failed to init libpostal core");
+    static ref POSTAL_CLASSIFIER: rpostal::LanguageClassifier<'static> = POSTAL_CORE
+        .setup_language_classifier()
+        .expect("failed to init libpostal classifier");
+}
 
 pub struct Dedupe {
     db: DbHashes,
-    rpostal_core: rpostal::Core,
 }
 
 impl Dedupe {
     pub fn new(output_path: PathBuf) -> rusqlite::Result<Self> {
         Ok(Self {
             db: DbHashes::new(output_path)?,
-            rpostal_core: rpostal::Core::setup().expect("failed to init libpostal"),
         })
     }
 
     pub fn load_addresses(
         &mut self,
-        mut addresses: impl Iterator<Item = (Address, f64)>,
+        addresses: impl Iterator<Item = (Address, f64)>,
     ) -> rusqlite::Result<()> {
-        // Init libpostal classifier
-        let rpostal_classifier = self
-            .rpostal_core
-            .setup_language_classifier()
-            .expect("failed loading langage classifier");
+        // Compute hashes in parallel using following pipeline:
+        //
+        // [     addr_sender      ] main thread
+        //            |
+        //            |  (address, rank)
+        //            v
+        // [    addr_receiver     ]
+        // [         |||          ] worker threads
+        // [     hash_sender      ]
+        //            |
+        //            |  (address, rank, hashes)
+        //            v
+        // [     hash_receiver    ] writter thread
 
-        loop {
-            // Collect a batch from the address database
-            let batch: Vec<_> = (&mut addresses).take(TRANSACTIONS_SIZE).collect();
+        let nb_workers: usize = num_cpus::get() - 2;
+        let (addr_sender, addr_receiver) = channel::bounded(CHANNEL_SIZES);
+        let (hash_sender, hash_receiver) = channel::bounded(CHANNEL_SIZES);
 
-            if batch.is_empty() {
-                break;
-            }
+        // --- Init worker threads
 
-            // Compute hashes
-            let (hash_sender, hash_receiver) = sync_channel(100);
-            let mut conn = self.db.get_conn();
+        for _ in 0..nb_workers {
+            let addr_receiver = addr_receiver.clone();
+            let hash_sender = hash_sender.clone();
 
-            let receive_thread = thread::spawn(move || {
-                let mut tran = conn.transaction().unwrap();
-                tran.set_drop_behavior(DropBehavior::Commit);
-                let mut inserter = DbHashes::get_inserter(&mut tran).unwrap();
-
-                for (address, rank, hashes) in hash_receiver {
-                    if let Ok(addr_id) = inserter.insert_address(&address, rank) {
-                        for hash in hashes {
-                            inserter.insert_hash(addr_id, hash as i64).unwrap();
-                        }
-                    }
+            thread::spawn(move || {
+                for (address, rank) in addr_receiver {
+                    let hashes: Vec<_> = hash_address(&POSTAL_CLASSIFIER, &address).collect();
+                    hash_sender
+                        .send((address, rank, hashes))
+                        .expect("failed sending hashes: channel may have closed too early");
                 }
             });
-
-            batch
-                .into_par_iter()
-                .for_each_with(hash_sender, |sender, (address, rank)| {
-                    let hashes: Vec<_> = hash_address(&rpostal_classifier, &address).collect();
-                    sender.send((address, rank, hashes)).unwrap();
-                });
-
-            receive_thread.join().unwrap();
         }
 
+        // Drop channels that were cloned before being sent
+        drop(addr_receiver);
+        drop(hash_sender);
+
+        // --- Init writter thread
+
+        let mut conn = self.db.get_conn();
+
+        let writter_thread = thread::spawn(move || {
+            let mut tran = conn.transaction().expect("failed to init transaction");
+            tran.set_drop_behavior(DropBehavior::Commit);
+            let mut inserter = DbHashes::get_inserter(&mut tran).expect("failed to init inserter");
+
+            for (address, rank, hashes) in hash_receiver {
+                // TODO: better error handling
+                if let Ok(addr_id) = inserter.insert_address(&address, rank) {
+                    for hash in hashes {
+                        inserter
+                            .insert_hash(addr_id, hash as i64)
+                            .expect("failed inserting hash");
+                    }
+                }
+            }
+        });
+
+        // --- Send addresses through channel
+
+        for (address, rank) in addresses {
+            addr_sender
+                .send((address, rank))
+                .expect("failed sending address: channel may have closed to early");
+        }
+
+        drop(addr_sender);
+        writter_thread
+            .join()
+            .expect("failed joining writter thread");
         Ok(())
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
-        let conn_get_collisions = self.db.get_conn();
-
-        let mut conn_insert = self.db.get_conn();
-        let mut tran_insert = conn_insert.transaction()?;
-        tran_insert.set_drop_behavior(DropBehavior::Commit);
-        let mut inserter = DbHashes::get_inserter(&mut tran_insert)?;
-
+        // --- Query collisions from DB
         let count_addresses_before = self.db.count_addresses()?;
         eprintln!(
             "Query SQLite for hash collisions ({} addresses)",
             count_addresses_before
         );
 
-        let rpostal_classifier = self
-            .rpostal_core
-            .setup_language_classifier()
-            .expect("failed to init libpostal classifier");
-
+        let conn_get_collisions = self.db.get_conn();
         let mut collisions = DbHashes::feasible_duplicates(&conn_get_collisions)?;
-        let mut collisions_iter = collisions.iter()?;
 
-        loop {
-            let batch: Vec<_> = (&mut collisions_iter).take(TRANSACTIONS_SIZE).collect();
+        // Eliminate false positives in parallel using following pipeline:
+        //
+        // [     col_sender     ] main thread
+        //            |
+        //            |  (address, rank)
+        //            v
+        // [    col_receiver    ]
+        // [         |||        ] worker threads
+        // [     del_sender     ]
+        //            |
+        //            |  (address, rank, hashes)
+        //            v
+        // [    del_receiver    ] writter thread
 
-            if batch.is_empty() {
-                break;
-            }
+        let nb_workers: usize = num_cpus::get() - 2;
+        let (col_sender, col_receiver) = channel::bounded(CHANNEL_SIZES);
+        let (del_sender, del_receiver) = channel::bounded(CHANNEL_SIZES);
 
-            let to_delete: Vec<_> = batch
-                .into_par_iter()
-                .map(|pair| pair.unwrap_or_else(|e| panic!("failed to retrieve duplicates: {}", e)))
-                .filter(|((_, addr_1, _), (_, addr_2, _))| {
-                    is_duplicate(&rpostal_classifier, &addr_1, &addr_2)
-                })
-                .map(
-                    |((id_1, _, rank_1), (id_2, _, rank_2))| {
-                        if rank_1 > rank_2 {
-                            id_1
-                        } else {
-                            id_2
-                        }
-                    },
-                )
-                .collect();
+        // --- Init worker threads
 
-            for id in to_delete {
-                inserter.insert_to_delete(id)?;
-            }
+        for _ in 0..nb_workers {
+            let col_receiver = col_receiver.clone();
+            let del_sender = del_sender.clone();
+
+            thread::spawn(move || {
+                for ((id_1, addr_1, rank_1), (id_2, addr_2, rank_2)) in col_receiver {
+                    if is_duplicate(&POSTAL_CLASSIFIER, &addr_1, &addr_2) {
+                        let to_delete = if rank_1 > rank_2 { id_1 } else { id_2 };
+                        del_sender.send(to_delete).expect(
+                            "failed to send id to delete: channel may have closed too early",
+                        );
+                    }
+                }
+            });
         }
 
+        drop(col_receiver);
+        drop(del_sender);
+
+        // --- Init writter thread
+
+        let mut conn_insert = self.db.get_conn();
+
+        let writter_thread = thread::spawn(move || {
+            let mut tran_insert = conn_insert
+                .transaction()
+                .expect("failed to init transaction");
+            tran_insert.set_drop_behavior(DropBehavior::Commit);
+            let mut inserter =
+                DbHashes::get_inserter(&mut tran_insert).expect("failed to init inserter");
+
+            for id in del_receiver {
+                if let Err(e) = inserter.insert_to_delete(id) {
+                    eprintln!("failed to insert id to delete in the database: {}", e)
+                };
+            }
+        });
+
+        // --- Send conflicting pairs into channels
+
+        for collision in collisions.iter()? {
+            col_sender
+                .send(collision?)
+                .expect("failed to send collision: channel may have closed too early");
+        }
+
+        drop(col_sender);
+        writter_thread
+            .join()
+            .expect("failed joining writting thread");
         Ok(())
     }
 

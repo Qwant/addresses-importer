@@ -3,11 +3,14 @@
 //  - stocker un identifiant de la source dans la BDD et les prioriser (envoyer un closure à
 //    compute_duplicates)
 
+extern crate crossbeam;
 extern crate geo;
 extern crate geo_geojson;
+extern crate num_cpus;
+#[macro_use]
+extern crate lazy_static;
 extern crate r2d2;
 extern crate r2d2_sqlite;
-extern crate rayon;
 extern crate rpostal;
 extern crate rprogress;
 extern crate rusqlite;
@@ -73,8 +76,6 @@ where
         |row| row.get(0).map(|x: isize| x),
     )?)
     .expect("failed to count number of addresses");
-
-    eprintln!("Importing {} addresses from {:?}", nb_addresses, path);
 
     let mut stmt = input_conn.prepare("SELECT * FROM addresses")?;
     let addresses = stmt
