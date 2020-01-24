@@ -1,14 +1,10 @@
-// TODO
-//  - filtrer les addresses en entrée pour la France
-//  - stocker un identifiant de la source dans la BDD et les prioriser (envoyer un closure à
-//    compute_duplicates)
-
 extern crate crossbeam;
 extern crate geo;
 extern crate geo_geojson;
 extern crate num_cpus;
 #[macro_use]
 extern crate lazy_static;
+extern crate libsqlite3_sys;
 extern crate rpostal;
 extern crate rprogress;
 extern crate rusqlite;
@@ -102,9 +98,9 @@ fn main() -> rusqlite::Result<()> {
         collection
             .into_iter()
             .next()
-            .unwrap()
+            .expect("found an empty collection for France")
             .into_multi_polygon()
-            .unwrap()
+            .expect("France should be a MultiPolygon")
     };
 
     let is_in_france = move |address: &Address| -> bool {

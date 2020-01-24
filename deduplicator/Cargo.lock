@@ -125,6 +125,7 @@ dependencies = [
  "geo 0.12.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "geo-geojson 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libsqlite3-sys 0.17.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "num_cpus 1.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rpostal 0.1.0 (git+https://github.com/GuillaumeGomez/libpostal-rs.git)",
  "rprogress 0.1.0 (git+https://github.com/remi-dupre/rprogress)",

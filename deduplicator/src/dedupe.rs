@@ -7,8 +7,9 @@ use std::thread;
 use crossbeam::channel;
 use geo::prelude::*;
 use geo::Point;
+use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use rpostal;
-use rusqlite::DropBehavior;
+use rusqlite::{DropBehavior, Error::SqliteFailure};
 
 use crate::address::Address;
 use crate::db_hashes::DbHashes;
@@ -82,19 +83,29 @@ impl Dedupe {
             .db
             .get_conn()
             .expect("failed to open SQLite connection");
+
         let writter_thread = thread::spawn(move || {
             let mut tran = conn.transaction().expect("failed to init transaction");
             tran.set_drop_behavior(DropBehavior::Commit);
             let mut inserter = DbHashes::get_inserter(&mut tran).expect("failed to init inserter");
 
             for (address, rank, hashes) in hash_receiver {
-                // TODO: better error handling
-                if let Ok(addr_id) = inserter.insert_address(&address, rank) {
-                    for hash in hashes {
-                        inserter
-                            .insert_hash(addr_id, hash as i64)
-                            .expect("failed inserting hash");
+                match inserter.insert_address(&address, rank) {
+                    Ok(addr_id) => {
+                        for hash in hashes {
+                            inserter
+                                .insert_hash(addr_id, hash as i64)
+                                .expect("failed inserting hash");
+                        }
                     }
+                    Err(SqliteFailure(
+                        libsqlite3_sys::Error {
+                            code: ConstraintViolation,
+                            extended_code: _,
+                        },
+                        _,
+                    )) => (),
+                    Err(e) => eprintln!("failed inserting address: {}", e),
                 }
             }
         });

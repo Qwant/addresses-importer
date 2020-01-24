@@ -9,6 +9,7 @@ crossbeam = "0.7"
 geo = "0.12"
 geo-geojson = "0.1"
 lazy_static = "1.4"
+libsqlite3-sys = "0.17.1"
 num_cpus = "1.12"
 rpostal = { git = "https://github.com/GuillaumeGomez/libpostal-rs.git" }
 rprogress = { git = "https://github.com/remi-dupre/rprogress" }
