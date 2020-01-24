@@ -70,7 +70,9 @@ pub struct DB {
 
 impl DB {
     fn new(db_file: &str, db_buffer_size: usize, remove_db_data: bool) -> Result<DB, String> {
-        let _ = fs::remove_file(db_file); // we ignore any potential error
+        if remove_db_data {
+            let _ = fs::remove_file(db_file); // we ignore any potential error
+        }
         let conn = Connection::open(db_file)
             .map_err(|e| format!("failed to open SQLITE connection: {}", e))?;
 
