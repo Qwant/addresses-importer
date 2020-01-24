@@ -18,7 +18,6 @@ extern crate structopt;
 mod address;
 mod db_hashes;
 mod dedupe;
-mod postal_wrappers;
 
 use std::convert::TryFrom;
 use std::fs::read_to_string;

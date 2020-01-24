@@ -12,10 +12,6 @@ use rusqlite::DropBehavior;
 
 use crate::address::Address;
 use crate::db_hashes::DbHashes;
-use crate::postal_wrappers::{
-    is_house_number_duplicate, is_name_duplicate, is_postal_code_duplicate, is_street_duplicate,
-    DuplicateStatus,
-};
 
 const CHANNEL_SIZES: usize = 1000;
 
@@ -257,7 +253,8 @@ pub fn is_duplicate(
     addr_1: &Address,
     addr_2: &Address,
 ) -> bool {
-    use DuplicateStatus::*;
+    use rpostal::DuplicateStatus::*;
+    let def_opt = POSTAL_CLASSIFIER.get_default_duplicate_options();
 
     let close_duplicate = || {
         let point_1 = Point::new(addr_1.lon, addr_1.lat);
@@ -265,26 +262,26 @@ pub fn is_duplicate(
 
         (point_1.haversine_distance(&point_2) <= 100.)
             && field_compare(&addr_1.number, &addr_2.number, |x, y| {
-                is_house_number_duplicate(x, y) >= ExactDuplicate
+                POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) >= ExactDuplicate
             })
             && field_compare(&addr_1.street, &addr_2.street, |x, y| {
-                is_street_duplicate(x, y) >= LikelyDuplicate
+                POSTAL_CLASSIFIER.is_street_duplicate(x, y, &def_opt) >= LikelyDuplicate
             })
     };
 
     let exact_duplicate = || {
         field_compare(&addr_1.number, &addr_1.number, |x, y| {
-            is_house_number_duplicate(x, y) == ExactDuplicate
+            POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) == ExactDuplicate
         }) // -
         && field_compare(&addr_1.street, &addr_2.street, |x, y| {
-            is_street_duplicate(x, y) == ExactDuplicate
+            POSTAL_CLASSIFIER.is_street_duplicate(x, y, &def_opt) == ExactDuplicate
         }) // -
         && ( // -
             field_compare(&addr_1.postcode, &addr_2.postcode, |x, y| {
-                is_postal_code_duplicate(x, y) == ExactDuplicate
+                POSTAL_CLASSIFIER.is_postal_code_duplicate(x, y, &def_opt) == ExactDuplicate
             }) // -
             || field_compare(&addr_1.city, &addr_2.city, |x, y| {
-                is_name_duplicate(x, y) == ExactDuplicate
+                POSTAL_CLASSIFIER.is_name_duplicate(x, y, &def_opt) == ExactDuplicate
             })
         )
     };
