@@ -69,17 +69,19 @@ pub struct DB {
 }
 
 impl DB {
-    fn new(db_file: &str, db_buffer_size: usize) -> Result<DB, String> {
+    fn new(db_file: &str, db_buffer_size: usize, remove_db_data: bool) -> Result<DB, String> {
         let _ = fs::remove_file(db_file); // we ignore any potential error
         let conn = Connection::open(db_file)
             .map_err(|e| format!("failed to open SQLITE connection: {}", e))?;
 
-        conn.execute("DROP TABLE IF EXISTS addresses", NO_PARAMS)
-            .expect("failed to drop addresses");
-        conn.execute("DROP TABLE IF EXISTS addresses_errors", NO_PARAMS)
-            .expect("failed to drop errors");
+        if remove_db_data {
+            conn.execute("DROP TABLE IF EXISTS addresses", NO_PARAMS)
+                .expect("failed to drop addresses");
+            conn.execute("DROP TABLE IF EXISTS addresses_errors", NO_PARAMS)
+                .expect("failed to drop errors");
+        }
         conn.execute(
-            r#"CREATE TABLE addresses(
+            r#"CREATE TABLE IF NOT EXISTS addresses(
                 lat REAL NOT NULL,
                 lon REAL NOT NULL,
                 number TEXT,
@@ -95,7 +97,7 @@ impl DB {
         )
         .map_err(|e| format!("failed to create table: {}", e))?;
         conn.execute(
-            r#"CREATE TABLE addresses_errors(
+            r#"CREATE TABLE IF NOT EXISTS addresses_errors(
                 lat REAL,
                 lon REAL,
                 number TEXT,
@@ -255,12 +257,16 @@ impl Drop for DB {
     }
 }
 
-pub fn import_addresses<P: AsRef<Path>>(db_file_name: &str, pbf_file: P) -> DB {
+pub fn import_addresses<P: AsRef<Path>>(
+    db_file_name: &str,
+    pbf_file: P,
+    remove_db_data: bool,
+) -> DB {
     let mut reader = OsmPbfReader::new(File::open(&pbf_file).expect(&format!(
         "Failed to open file `{}`",
         pbf_file.as_ref().display()
     )));
-    let mut db = DB::new(db_file_name, 100).expect("failed to create DB");
+    let mut db = DB::new(db_file_name, 100, remove_db_data).expect("failed to create DB");
     for obj in reader.iter().filter_map(|o| match o {
         Ok(OsmObj::Node(o)) if o.tags.iter().any(|x| x.0.contains("addr:")) => Some(o),
         _ => None,
