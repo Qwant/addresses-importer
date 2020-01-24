@@ -10,8 +10,6 @@ geo = "0.12.2"
 geo-geojson = "0.1.0"
 lazy_static = "1.4.0"
 num_cpus = "1.12.0"
-r2d2 = "0.8.8"
-r2d2_sqlite = "0.14.0"
 rpostal = { git = "https://github.com/GuillaumeGomez/libpostal-rs.git" }
 rprogress = { git = "https://github.com/remi-dupre/rprogress" }
 rusqlite = "0.21"

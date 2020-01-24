@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use r2d2::{Pool, PooledConnection};
-use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
 
 use crate::address::Address;
@@ -18,14 +16,12 @@ const TABLE_TO_DELETE: &str = "_to_delete";
 //
 
 pub struct DbHashes {
-    pool: Pool<SqliteConnectionManager>,
+    db_path: PathBuf,
 }
 
 impl DbHashes {
     pub fn new(db_path: PathBuf) -> rusqlite::Result<Self> {
-        let manager = SqliteConnectionManager::file(db_path);
-        let pool = r2d2::Pool::builder().build(manager).unwrap();
-        let conn = pool.get().unwrap();
+        let conn = Connection::open(&db_path)?;
 
         conn.pragma_update(None, "page_size", &4096)?;
         conn.pragma_update(None, "cache_size", &10_000)?;
@@ -58,15 +54,15 @@ impl DbHashes {
             TABLE_ADDRESSES, TABLE_HASHES, TABLE_TO_DELETE
         ))?;
 
-        Ok(Self { pool })
+        Ok(Self { db_path })
     }
 
-    pub fn get_conn(&self) -> PooledConnection<SqliteConnectionManager> {
-        self.pool.get().unwrap()
+    pub fn get_conn(&self) -> rusqlite::Result<Connection> {
+        Connection::open(&self.db_path)
     }
 
     pub fn count_addresses(&self) -> rusqlite::Result<isize> {
-        self.get_conn().query_row(
+        self.get_conn()?.query_row(
             &format!("SELECT COUNT(*) FROM {};", TABLE_ADDRESSES),
             NO_PARAMS,
             |row: &rusqlite::Row| row.get(0),
@@ -74,7 +70,7 @@ impl DbHashes {
     }
 
     pub fn count_to_delete(&self) -> rusqlite::Result<isize> {
-        self.get_conn().query_row(
+        self.get_conn()?.query_row(
             &format!("SELECT COUNT(*) FROM {};", TABLE_TO_DELETE),
             NO_PARAMS,
             |row: &rusqlite::Row| row.get(0),
@@ -88,13 +84,13 @@ impl DbHashes {
     }
 
     pub fn feasible_duplicates<'c>(
-        conn: &'c PooledConnection<SqliteConnectionManager>,
+        conn: &'c Connection,
     ) -> rusqlite::Result<CollisionsIterable<'c>> {
         CollisionsIterable::prepare(conn)
     }
 
     pub fn apply_addresses_to_delete(&self) -> rusqlite::Result<usize> {
-        self.get_conn().execute(
+        self.get_conn()?.execute(
             &format!(
                 "DELETE FROM {} WHERE rowid IN (SELECT address_id FROM {});",
                 TABLE_ADDRESSES, TABLE_TO_DELETE
@@ -104,7 +100,7 @@ impl DbHashes {
     }
 
     pub fn cleanup_database(&self) -> rusqlite::Result<()> {
-        let conn = self.get_conn();
+        let conn = self.get_conn()?;
 
         for db in [TABLE_HASHES, TABLE_TO_DELETE].into_iter() {
             conn.execute_batch(&format!("DROP TABLE {};", db))?;

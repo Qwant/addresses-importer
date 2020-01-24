@@ -9,8 +9,6 @@ extern crate geo_geojson;
 extern crate num_cpus;
 #[macro_use]
 extern crate lazy_static;
-extern crate r2d2;
-extern crate r2d2_sqlite;
 extern crate rpostal;
 extern crate rprogress;
 extern crate rusqlite;

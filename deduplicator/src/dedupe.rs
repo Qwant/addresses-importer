@@ -82,8 +82,10 @@ impl Dedupe {
 
         // --- Init writter thread
 
-        let mut conn = self.db.get_conn();
-
+        let mut conn = self
+            .db
+            .get_conn()
+            .expect("failed to open SQLite connection");
         let writter_thread = thread::spawn(move || {
             let mut tran = conn.transaction().expect("failed to init transaction");
             tran.set_drop_behavior(DropBehavior::Commit);
@@ -124,7 +126,7 @@ impl Dedupe {
             count_addresses_before
         );
 
-        let conn_get_collisions = self.db.get_conn();
+        let conn_get_collisions = self.db.get_conn()?;
         let mut collisions = DbHashes::feasible_duplicates(&conn_get_collisions)?;
 
         // Eliminate false positives in parallel using following pipeline:
@@ -168,7 +170,7 @@ impl Dedupe {
 
         // --- Init writter thread
 
-        let mut conn_insert = self.db.get_conn();
+        let mut conn_insert = self.db.get_conn()?;
 
         let writter_thread = thread::spawn(move || {
             let mut tran_insert = conn_insert
