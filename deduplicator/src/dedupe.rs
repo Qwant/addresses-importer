@@ -52,7 +52,7 @@ impl Dedupe {
             }
 
             // Compute hashes
-            let (hash_sender, hash_receiver) = sync_channel(1000);
+            let (hash_sender, hash_receiver) = sync_channel(100);
             let mut conn = self.db.get_conn();
 
             let receive_thread = thread::spawn(move || {
@@ -202,11 +202,14 @@ pub fn is_duplicate(
         && field_compare(&addr_1.street, &addr_2.street, |x, y| {
             is_street_duplicate(x, y) == ExactDuplicate
         }) // -
-        && (field_compare(&addr_1.postcode, &addr_2.postcode, |x, y| {
-            is_postal_code_duplicate(x, y) == ExactDuplicate
-        }) || field_compare(&addr_1.city, &addr_2.city, |x, y| {
-            is_name_duplicate(x, y) == ExactDuplicate
-        }))
+        && ( // -
+            field_compare(&addr_1.postcode, &addr_2.postcode, |x, y| {
+                is_postal_code_duplicate(x, y) == ExactDuplicate
+            }) // -
+            || field_compare(&addr_1.city, &addr_2.city, |x, y| {
+                is_name_duplicate(x, y) == ExactDuplicate
+            })
+        )
     };
 
     close_duplicate() || exact_duplicate()
