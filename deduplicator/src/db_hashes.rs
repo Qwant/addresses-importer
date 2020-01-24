@@ -37,6 +37,7 @@ impl DbHashes {
                 district    TEXT,
                 region      TEXT,
                 postcode    TEXT,
+                rank        REAL,
                 PRIMARY KEY (lat, lon, number, street, city)
             );
 
@@ -61,6 +62,14 @@ impl DbHashes {
     pub fn count_addresses(&self) -> rusqlite::Result<isize> {
         self.get_conn().query_row(
             &format!("SELECT COUNT(*) FROM {};", TABLE_ADDRESSES),
+            NO_PARAMS,
+            |row: &rusqlite::Row| row.get(0),
+        )
+    }
+
+    pub fn count_to_delete(&self) -> rusqlite::Result<isize> {
+        self.get_conn().query_row(
+            &format!("SELECT COUNT(*) FROM {};", TABLE_TO_DELETE),
             NO_PARAMS,
             |row: &rusqlite::Row| row.get(0),
         )
@@ -125,8 +134,9 @@ impl<'c, 't> Inserter<'c, 't> {
                 city,
                 district,
                 region,
-                postcode
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
+                postcode,
+                rank
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);",
             TABLE_ADDRESSES
         ))?;
 
@@ -148,7 +158,7 @@ impl<'c, 't> Inserter<'c, 't> {
         })
     }
 
-    pub fn insert_address(&mut self, address: &Address) -> rusqlite::Result<i64> {
+    pub fn insert_address(&mut self, address: &Address, rank: f64) -> rusqlite::Result<i64> {
         self.stmt_insert_address.execute(&[
             &address.lat as &dyn ToSql,
             &address.lon,
@@ -159,6 +169,7 @@ impl<'c, 't> Inserter<'c, 't> {
             &address.district,
             &address.region,
             &address.postcode,
+            &rank,
         ])?;
         Ok(self.tran.last_insert_rowid())
     }
@@ -199,6 +210,7 @@ impl<'c> CollisionsIterable<'c> {
                     addr_1.district     AS addr_1_district,
                     addr_1.region       AS addr_1_region,
                     addr_1.postcode     AS addr_1_postcode,
+                    addr_1.rank         AS addr_1_rank,
                     addr_2.rowid        AS addr_2_id,
                     addr_2.lat          AS addr_2_lat,
                     addr_2.lon          AS addr_2_lon,
@@ -208,7 +220,8 @@ impl<'c> CollisionsIterable<'c> {
                     addr_2.city         AS addr_2_city,
                     addr_2.district     AS addr_2_district,
                     addr_2.region       AS addr_2_region,
-                    addr_2.postcode     AS addr_2_postcode
+                    addr_2.postcode     AS addr_2_postcode,
+                    addr_2.rank         AS addr_2_rank
                 FROM {addresses} AS addr_1
                 JOIN {addresses} AS addr_2
                 JOIN {hashes} AS hash_1 ON addr_1.rowid = hash_1.address
@@ -223,7 +236,7 @@ impl<'c> CollisionsIterable<'c> {
     pub fn iter<'s>(
         &'s mut self,
     ) -> rusqlite::Result<
-        impl Iterator<Item = rusqlite::Result<((i64, Address), (i64, Address))>> + 's,
+        impl Iterator<Item = rusqlite::Result<((i64, Address, f64), (i64, Address, f64))>> + 's,
     > {
         let Self(stmt) = self;
 
@@ -232,10 +245,12 @@ impl<'c> CollisionsIterable<'c> {
                 (
                     row.get("addr_1_id")?,
                     address_from_sqlite_row_with_prefix!("addr_1_", row)?,
+                    row.get("addr_1_rank")?,
                 ),
                 (
                     row.get("addr_2_id")?,
                     address_from_sqlite_row_with_prefix!("addr_2_", row)?,
+                    row.get("addr_2_rank")?,
                 ),
             ))
         })?)

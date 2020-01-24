@@ -1,4 +1,3 @@
-use std::cmp::min;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -35,7 +34,7 @@ impl Dedupe {
 
     pub fn load_addresses(
         &mut self,
-        mut addresses: impl Iterator<Item = Address>,
+        mut addresses: impl Iterator<Item = (Address, f64)>,
     ) -> rusqlite::Result<()> {
         // Init libpostal classifier
         let rpostal_classifier = self
@@ -60,8 +59,8 @@ impl Dedupe {
                 tran.set_drop_behavior(DropBehavior::Commit);
                 let mut inserter = DbHashes::get_inserter(&mut tran).unwrap();
 
-                for (address, hashes) in hash_receiver {
-                    if let Ok(addr_id) = inserter.insert_address(&address) {
+                for (address, rank, hashes) in hash_receiver {
+                    if let Ok(addr_id) = inserter.insert_address(&address, rank) {
                         for hash in hashes {
                             inserter.insert_hash(addr_id, hash as i64).unwrap();
                         }
@@ -71,9 +70,9 @@ impl Dedupe {
 
             batch
                 .into_par_iter()
-                .for_each_with(hash_sender, |sender, address| {
+                .for_each_with(hash_sender, |sender, (address, rank)| {
                     let hashes: Vec<_> = hash_address(&rpostal_classifier, &address).collect();
-                    sender.send((address, hashes)).unwrap();
+                    sender.send((address, rank, hashes)).unwrap();
                 });
 
             receive_thread.join().unwrap();
@@ -114,10 +113,18 @@ impl Dedupe {
             let to_delete: Vec<_> = batch
                 .into_par_iter()
                 .map(|pair| pair.unwrap_or_else(|e| panic!("failed to retrieve duplicates: {}", e)))
-                .filter(|((_, addr_1), (_, addr_2))| {
+                .filter(|((_, addr_1, _), (_, addr_2, _))| {
                     is_duplicate(&rpostal_classifier, &addr_1, &addr_2)
                 })
-                .map(|((id_1, _), (id_2, _))| min(id_1, id_2))
+                .map(
+                    |((id_1, _, rank_1), (id_2, _, rank_2))| {
+                        if rank_1 > rank_2 {
+                            id_1
+                        } else {
+                            id_2
+                        }
+                    },
+                )
                 .collect();
 
             for id in to_delete {
@@ -129,7 +136,10 @@ impl Dedupe {
     }
 
     pub fn apply_and_clean(&self) -> rusqlite::Result<()> {
-        eprintln!("Appling deletion");
+        eprintln!(
+            "Appling deletion ({} addresses)",
+            self.db.count_to_delete()?
+        );
         self.db.apply_addresses_to_delete()?;
 
         eprintln!("Cleaning database");

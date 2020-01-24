@@ -34,8 +34,8 @@ use dedupe::Dedupe;
 
 const FRANCE_GEOJSON: &str = "data/france.json";
 
-const PRIORITY_OSM: f32 = 2.;
-const PRIORITY_OPENADDRESS: f32 = 1.;
+const PRIORITY_OSM: f64 = 2.;
+const PRIORITY_OPENADDRESS: f64 = 1.;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -60,11 +60,11 @@ fn load_from_sqlite<F, R>(
     deduplication: &mut Dedupe,
     path: PathBuf,
     filter: F,
-    _ranking: R,
+    ranking: R,
 ) -> rusqlite::Result<()>
 where
     F: Fn(&Address) -> bool,
-    R: Fn(&Address) -> f32,
+    R: Fn(&Address) -> f64,
 {
     let input_conn = Connection::open(&path)?;
     let nb_addresses = usize::try_from(input_conn.query_row(
@@ -72,17 +72,24 @@ where
         NO_PARAMS,
         |row| row.get(0).map(|x: isize| x),
     )?)
-    .unwrap();
+    .expect("failed to count number of addresses");
 
     eprintln!("Importing {} addresses from {:?}", nb_addresses, path);
 
     let mut stmt = input_conn.prepare("SELECT * FROM addresses")?;
     let addresses = stmt
         .query_map(NO_PARAMS, |row| Address::from_sqlite_row(&row))?
-        .map(|addr| addr.unwrap_or_else(|e| panic!("failed to read address from source: {}", e)))
         .uprogress(nb_addresses)
-        .with_prefix(format!("Importing {:<55}", format!("{:?}", path)))
-        .filter(filter);
+        .with_prefix(format!("{:<45}", format!("{:?}", path)))
+        .filter_map(|addr| {
+            addr.map_err(|e| eprintln!("failed to read address from DB: {}", e))
+                .ok()
+        })
+        .filter(filter)
+        .map(|addr| {
+            let rank = ranking(&addr);
+            (addr, rank)
+        });
 
     deduplication.load_addresses(addresses)
 }
@@ -106,6 +113,7 @@ fn main() -> rusqlite::Result<()> {
     };
 
     // --- Read parameters
+
     let params = Params::from_args();
     let mut deduplication = Dedupe::new(params.output)?;
 
