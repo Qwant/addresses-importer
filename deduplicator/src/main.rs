@@ -14,19 +14,18 @@ extern crate structopt;
 mod address;
 mod db_hashes;
 mod dedupe;
+mod tests;
 mod utils;
 
-use std::convert::TryFrom;
 use std::path::PathBuf;
 
 use geo::algorithm::contains::Contains;
 use geo::{MultiPolygon, Point};
-use prog_rs::prelude::*;
-use rusqlite::{Connection, NO_PARAMS};
 use structopt::StructOpt;
 
 use address::Address;
 use dedupe::Dedupe;
+use utils::load_from_sqlite;
 
 const FRANCE_GEOJSON: &str = include_str!("data/france.json");
 
@@ -50,39 +49,6 @@ struct Params {
     /// Path to output database.
     #[structopt(short, long, default_value = "addresses.db")]
     output: PathBuf,
-}
-
-fn load_from_sqlite<F, R>(
-    deduplication: &mut Dedupe,
-    path: PathBuf,
-    filter: F,
-    ranking: R,
-) -> rusqlite::Result<()>
-where
-    F: Fn(&Address) -> bool,
-    R: Fn(&Address) -> f64 + Clone + Send + 'static,
-{
-    let input_conn = Connection::open(&path)?;
-    let nb_addresses = usize::try_from(input_conn.query_row(
-        "SELECT COUNT(*) FROM addresses;",
-        NO_PARAMS,
-        |row| row.get(0).map(|x: isize| x),
-    )?)
-    .expect("failed to count number of addresses");
-
-    let mut stmt = input_conn.prepare("SELECT * FROM addresses")?;
-    let addresses = stmt
-        .query_map(NO_PARAMS, |row| Address::from_sqlite_row(&row))?
-        .progress()
-        .with_iter_size(nb_addresses)
-        .with_prefix(format!("{:<45}", format!("{:?}", path)))
-        .filter_map(|addr| {
-            addr.map_err(|e| eprintln!("failed to read address from DB: {}", e))
-                .ok()
-        })
-        .filter(filter);
-
-    deduplication.load_addresses(addresses, ranking)
 }
 
 fn main() -> rusqlite::Result<()> {
