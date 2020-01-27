@@ -8,8 +8,8 @@ use std::thread;
 use crossbeam::channel;
 use geo::prelude::*;
 use geo::Point;
+use prog_rs::prelude::*;
 use rpostal;
-use rprogress::prelude::*;
 use rusqlite::DropBehavior;
 
 use crate::address::Address;
@@ -132,7 +132,7 @@ impl Dedupe {
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
         println!("Build index on hashes");
-        // self.db.create_hashes_index()?;
+        self.db.create_hashes_index()?;
 
         // --- Query collisions from DB
         let count_addresses_before = self.db.count_addresses()?;

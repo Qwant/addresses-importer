@@ -5,8 +5,8 @@ extern crate num_cpus;
 #[macro_use]
 extern crate lazy_static;
 extern crate libsqlite3_sys;
+extern crate prog_rs;
 extern crate rpostal;
-extern crate rprogress;
 extern crate rusqlite;
 extern crate structopt;
 
@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use geo::algorithm::contains::Contains;
 use geo::{MultiPolygon, Point};
-use rprogress::prelude::*;
+use prog_rs::prelude::*;
 use rusqlite::{Connection, NO_PARAMS};
 use structopt::StructOpt;
 
