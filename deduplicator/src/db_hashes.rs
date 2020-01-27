@@ -25,11 +25,12 @@ impl DbHashes {
 
         conn.pragma_update(None, "page_size", &4096)?;
         conn.pragma_update(None, "cache_size", &10_000)?;
-        conn.pragma_update(None, "synchronous", &"NORMAL")?;
+        conn.pragma_update(None, "synchronous", &"OFF")?;
         conn.pragma_update(None, "journal_mode", &"OFF")?;
 
         conn.execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS {} (
+            "
+            CREATE TABLE IF NOT EXISTS {addresses} (
                 lat         REAL NOT NULL,
                 lon         REAL NOT NULL,
                 number      TEXT,
@@ -43,15 +44,18 @@ impl DbHashes {
                 PRIMARY KEY (lat, lon, number, street, city)
             );
 
-            CREATE TABLE IF NOT EXISTS {} (
+            CREATE TABLE IF NOT EXISTS {hashes} (
                 address     INTEGER NOT NULL,
-                hash        INTEGER NOT NULL
-            );
+                hash        INTEGER NOT NULL,
+                PRIMARY KEY (address, hash)
+            ) WITHOUT ROWID;
 
-            CREATE TABLE IF NOT EXISTS {} (
-                address_id  INTEGER NOT NULL
+            CREATE TABLE IF NOT EXISTS {to_delete} (
+                address_id  INTEGER PRIMARY KEY
             );",
-            TABLE_ADDRESSES, TABLE_HASHES, TABLE_TO_DELETE
+            addresses = TABLE_ADDRESSES,
+            hashes = TABLE_HASHES,
+            to_delete = TABLE_TO_DELETE
         ))?;
 
         Ok(Self { db_path })
@@ -59,6 +63,13 @@ impl DbHashes {
 
     pub fn get_conn(&self) -> rusqlite::Result<Connection> {
         Connection::open(&self.db_path)
+    }
+
+    pub fn create_hashes_index(&self) -> rusqlite::Result<()> {
+        self.get_conn()?.execute_batch(&format!(
+            "CREATE INDEX IF NOT EXISTS {hashes}_index_ ON {hashes} (hash);",
+            hashes = TABLE_HASHES
+        ))
     }
 
     pub fn count_addresses(&self) -> rusqlite::Result<isize> {
@@ -176,15 +187,15 @@ impl<'c, 't> Inserter<'c, 't> {
         Ok(self.tran.last_insert_rowid())
     }
 
-    pub fn insert_hash(&mut self, address_id: i64, address_hash: i64) -> rusqlite::Result<i64> {
+    pub fn insert_hash(&mut self, address_id: i64, address_hash: i64) -> rusqlite::Result<()> {
         self.stmt_insert_hash.execute(&[address_id, address_hash])?;
-        Ok(self.tran.last_insert_rowid())
+        Ok(())
     }
 
-    pub fn insert_to_delete(&mut self, address_id: i64) -> rusqlite::Result<i64> {
+    pub fn insert_to_delete(&mut self, address_id: i64) -> rusqlite::Result<()> {
         self.stmt_insert_to_delete
             .execute(std::iter::once(address_id))?;
-        Ok(self.tran.last_insert_rowid())
+        Ok(())
     }
 }
 
@@ -224,11 +235,16 @@ impl<'c> CollisionsIterable<'c> {
                     addr_2.region       AS addr_2_region,
                     addr_2.postcode     AS addr_2_postcode,
                     addr_2.rank         AS addr_2_rank
-                FROM {addresses} AS addr_1
-                JOIN {addresses} AS addr_2
-                JOIN {hashes} AS hash_1 ON addr_1.rowid = hash_1.address
-                JOIN {hashes} AS hash_2 ON addr_2.rowid = hash_2.address
-                WHERE addr_1.rowid < addr_2.rowid AND hash_1.hash = hash_2.hash;
+                FROM         {hashes}   AS hash_1
+                CROSS JOIN   {hashes}   AS hash_2
+                CROSS JOIN {addresses}  AS addr_1
+                CROSS JOIN {addresses}  AS addr_2
+                WHERE (
+                    addr_1.rowid < addr_2.rowid
+                    AND hash_1.hash = hash_2.hash
+                    AND addr_1.rowid = hash_1.address
+                    AND addr_2.rowid = hash_2.address
+                );
             ",
             addresses = TABLE_ADDRESSES,
             hashes = TABLE_HASHES

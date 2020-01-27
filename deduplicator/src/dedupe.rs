@@ -9,6 +9,7 @@ use geo::prelude::*;
 use geo::Point;
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use rpostal;
+use rprogress::prelude::*;
 use rusqlite::{DropBehavior, Error::SqliteFailure};
 
 use crate::address::Address;
@@ -93,9 +94,17 @@ impl Dedupe {
                 match inserter.insert_address(&address, rank) {
                     Ok(addr_id) => {
                         for hash in hashes {
-                            inserter
-                                .insert_hash(addr_id, hash as i64)
-                                .expect("failed inserting hash");
+                            match inserter.insert_hash(addr_id, hash as i64) {
+                                Ok(_)
+                                | Err(SqliteFailure(
+                                    libsqlite3_sys::Error {
+                                        code: ConstraintViolation,
+                                        extended_code: _,
+                                    },
+                                    _,
+                                )) => (),
+                                Err(e) => eprintln!("failed inserting hash: {}", e),
+                            }
                         }
                     }
                     Err(SqliteFailure(
@@ -126,9 +135,12 @@ impl Dedupe {
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
+        println!("Build index on hashes");
+        self.db.create_hashes_index()?;
+
         // --- Query collisions from DB
         let count_addresses_before = self.db.count_addresses()?;
-        eprintln!(
+        println!(
             "Query SQLite for hash collisions ({} addresses)",
             count_addresses_before
         );
@@ -196,7 +208,7 @@ impl Dedupe {
 
         // --- Send conflicting pairs into channels
 
-        for collision in collisions.iter()? {
+        for collision in collisions.iter()?.progress() {
             col_sender
                 .send(collision?)
                 .expect("failed to send collision: channel may have closed too early");
@@ -210,13 +222,13 @@ impl Dedupe {
     }
 
     pub fn apply_and_clean(&self) -> rusqlite::Result<()> {
-        eprintln!(
+        println!(
             "Appling deletion ({} addresses)",
             self.db.count_to_delete()?
         );
         self.db.apply_addresses_to_delete()?;
 
-        eprintln!("Cleaning database");
+        println!("Cleaning database");
         self.db.cleanup_database()?;
 
         Ok(())

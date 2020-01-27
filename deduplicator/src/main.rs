@@ -16,7 +16,6 @@ mod db_hashes;
 mod dedupe;
 
 use std::convert::TryFrom;
-use std::fs::read_to_string;
 use std::path::PathBuf;
 
 use geo::algorithm::contains::Contains;
@@ -28,7 +27,7 @@ use structopt::StructOpt;
 use address::Address;
 use dedupe::Dedupe;
 
-const FRANCE_GEOJSON: &str = "data/france.json";
+const FRANCE_GEOJSON: &str = include_str!("data/france.json");
 
 const PRIORITY_OSM: f64 = 2.;
 const PRIORITY_OPENADDRESS: f64 = 1.;
@@ -93,8 +92,8 @@ fn main() -> rusqlite::Result<()> {
     // --- Load France filter
 
     let france_shape: MultiPolygon<_> = {
-        let geojson = read_to_string(FRANCE_GEOJSON).expect("failed to load shape for France");
-        let collection = geo_geojson::from_str(&geojson).expect("failed to parse shape for France");
+        let collection =
+            geo_geojson::from_str(FRANCE_GEOJSON).expect("failed to parse shape for France");
         collection
             .into_iter()
             .next()
@@ -119,25 +118,25 @@ fn main() -> rusqlite::Result<()> {
         params.osm_db.len()
     );
 
-    for path in params.osm_db {
-        load_from_sqlite(
-            &mut deduplication,
-            path,
-            |addr| !is_in_france(addr),
-            |_| PRIORITY_OSM,
-        )
-        .expect("failed to load addresses from database");
-    }
+    // for path in params.osm_db {
+    //     load_from_sqlite(
+    //         &mut deduplication,
+    //         path,
+    //         |addr| !is_in_france(addr),
+    //         |_| PRIORITY_OSM,
+    //     )
+    //     .expect("failed to load addresses from database");
+    // }
 
     println!(
         "Loading OpenAddress addresses from {} SQLite databases",
         params.openaddress_db.len()
     );
 
-    for path in params.openaddress_db {
-        load_from_sqlite(&mut deduplication, path, |_| true, |_| PRIORITY_OPENADDRESS)
-            .expect("failed to load addresses from database");
-    }
+    // for path in params.openaddress_db {
+    //     load_from_sqlite(&mut deduplication, path, |_| true, |_| PRIORITY_OPENADDRESS)
+    //         .expect("failed to load addresses from database");
+    // }
 
     // --- Apply deduplication
 
