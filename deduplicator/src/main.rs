@@ -124,7 +124,10 @@ fn main() -> rusqlite::Result<()> {
             &mut deduplication,
             path,
             |addr| !is_in_france(addr),
-            |_| PRIORITY_OSM,
+            |addr| {
+                PRIORITY_OSM
+                    + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
+            },
         )
         .expect("failed to load addresses from database");
     }
@@ -135,8 +138,16 @@ fn main() -> rusqlite::Result<()> {
     );
 
     for path in params.openaddress_db {
-        load_from_sqlite(&mut deduplication, path, |_| true, |_| PRIORITY_OPENADDRESS)
-            .expect("failed to load addresses from database");
+        load_from_sqlite(
+            &mut deduplication,
+            path,
+            |_| true,
+            |addr| {
+                PRIORITY_OPENADDRESS
+                    + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
+            },
+        )
+        .expect("failed to load addresses from database");
     }
 
     // --- Apply deduplication
