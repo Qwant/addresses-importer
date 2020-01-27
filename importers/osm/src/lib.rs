@@ -377,6 +377,9 @@ impl DB {
     }
 
     fn insert(&mut self, addr: Address) {
+        if addr.street.is_none() {
+            return;
+        }
         self.buffer.push(addr);
         if self.buffer.len() >= self.db_buffer_size {
             self.flush_buffer();
