@@ -127,7 +127,7 @@ impl DBNodes {
         tx.set_drop_behavior(DropBehavior::Ignore);
 
         {
-            let mut stmt = tx.prepare("INSERT OR IGNORE INTO ids(id, obj, kind) VALUES (?1, ?2, ?3)").expect("DBNodes::flush: prepare failed");
+            let mut stmt = tx.prepare("INSERT OR IGNORE INTO nodes(id, obj, kind) VALUES (?1, ?2, ?3)").expect("DBNodes::flush: prepare failed");
             for (id, obj) in self.buffer.drain() {
                 let ser_obj = match bincode::serialize(&obj) {
                     Ok(s) => s,
@@ -152,7 +152,7 @@ impl DBNodes {
                 _ => panic!("we're not supposed to have something else than a node in a way!"),
             };
         }
-        let mut stmt = self.conn.prepare("SELECT obj FROM ids WHERE id=?1 AND kind=?2").expect("DB::get_from_id: prepare failed"
+        let mut stmt = self.conn.prepare("SELECT obj FROM nodes WHERE id=?1 AND kind=?2").expect("DB::get_from_id: prepare failed"
         );
         let mut iter = stmt.query(&[&id.inner_id() as &dyn ToSql, get_kind!(id)]).expect("DB::get_from_id: query_map failed");
         while let Some(row) = iter.next().expect("DBNodes::get_from_id: next failed") {
@@ -166,13 +166,13 @@ impl DBNodes {
     }
 
     fn iter_objs<F: FnMut(&OsmObj, &[Cow<Node>])>(&self, mut f: F) {
-        for (id, obj) in self.buffer.iter() {
+        for (_, obj) in self.buffer.iter() {
             match obj {
                 OsmObj::Way(w) => {
                     let nodes = w.nodes.iter().map(|n| self.get_from_id(&OsmId::Node(*n))).collect::<Vec<_>>();
                     f(obj, &nodes)
                 }
-                OsmObj::Node(n) => f(obj, &[]),
+                OsmObj::Node(_) => f(obj, &[]),
                 _ => unreachable!(),
             }
         }
@@ -188,7 +188,7 @@ impl DBNodes {
                     let nodes = w.nodes.iter().map(|n| self.get_from_id(&OsmId::Node(*n))).collect::<Vec<_>>();
                     f(&obj, &nodes)
                 }
-                OsmObj::Node(ref n) => f(&obj, &[]),
+                OsmObj::Node(_) => f(&obj, &[]),
                 _ => unreachable!(),
             }
         }
@@ -440,7 +440,7 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
         pbf_file.as_ref().display()
     )));
 
-    let mut db_nodes = DBNodes::new("nodes.db", 10000).expect("failed to create DBNodes");
+    let mut db_nodes = DBNodes::new("nodes.db", 1000).expect("failed to create DBNodes");
     reader.get_objs_and_deps_store(|obj| {
         match obj {
             OsmObj::Node(o) => {
@@ -453,7 +453,7 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
             }
             _ => false,
         }
-    }, &mut db_nodes);
+    }, &mut db_nodes).expect("get_objs_and_deps_store failed");
 
     db_nodes.flush_buffer();
     println!("Got {} potential addresses!", db_nodes.get_nb_entries());
@@ -466,74 +466,6 @@ pub fn import_addresses<P: AsRef<Path>>(
     remove_db_data: bool,
 ) -> DB {
     let db_nodes = get_nodes(pbf_file);
-    // for obj in reader.iter().filter_map(|o| match o {
-    //     Ok(OsmObj::Node(o)) => {
-    //         map.insert(o.id, (o.decimicro_lat, o.decimicro_lon));
-    //         if o.tags.iter().filter(|x| x.0.contains("addr:")).count() > 1 {
-    //             Some(o)
-    //         } else {
-    //             None
-    //         }
-    //     }
-    //     _ => None,
-    // }) {
-    //     // db.insert(Address::new(&obj.tags, obj.lat(), obj.lon()));
-    // }
-
-    // let objs = reader
-    //     .get_objs_and_deps(|o| match o {
-    //         // OsmObj::Node(n) => n.tags.iter().filter(|x| x.0.contains("addr:")).count() > 1,
-    //         OsmObj::Way(w) => {
-    //             !w.nodes.is_empty() &&
-    //             w.tags.iter().any(|x| x.0 == "addr:housenumber")
-    //                 && w.tags.iter().any(|x| x.0 == "addr:street")
-    //         }
-    //         _ => false,
-    //     })
-    //     .expect("failed to run get_objs_and_deps");
-    // for (_, obj) in &objs {
-    //     match obj {
-    //         OsmObj::Node(n) => {
-    //             db.insert(Address::new(&n.tags, n.lat(), n.lon()));
-    //         }
-    //         OsmObj::Way(w) => {
-    //             let nodes: Vec<&Node> = w
-    //                 .nodes
-    //                 .iter()
-    //                 .filter_map(|id| match objs.get(&OsmId::Node(*id)) {
-    //                     Some(OsmObj::Node(n)) => Some(n),
-    //                     _ => None,
-    //                 })
-    //                 .collect();
-    //             if nodes.is_empty() {
-    //                 continue;
-    //             } else if nodes.len() == 1 {
-    //                 db.insert(Address::new(&w.tags, nodes[0].lat(), nodes[0].lon()));
-    //                 continue;
-    //             }
-    //             let polygon = format!(
-    //                 "POLYGON(({}))",
-    //                 nodes
-    //                     .into_iter()
-    //                     .map(|n| format!("{} {}", n.lon(), n.lat()))
-    //                     .collect::<Vec<_>>()
-    //                     .join(",")
-    //             );
-    //             if let Ok(geom) = Geometry::new_from_wkt(&polygon).and_then(|g| g.get_centroid()) {
-    //                 let (lon, lat) = match (geom.get_x(), geom.get_y()) {
-    //                     (Ok(lon), Ok(lat)) => (lon, lat),
-    //                     _ => continue,
-    //                 };
-    //                 db.insert(Address::new(&w.tags, lat, lon));
-    //             } else {
-    //                 continue;
-    //             }
-    //         }
-    //         _ => {}
-    //     }
-    // }
-    // println!("END SIZE: {:?}", map.len());
-
     let mut db = DB::new(db_file_name, 1000, remove_db_data).expect("Failed to create DB");
     db_nodes.iter_objs(|obj, nodes| {
         match obj {
