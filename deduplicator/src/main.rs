@@ -1,4 +1,4 @@
-extern crate crossbeam;
+extern crate crossbeam_channel;
 extern crate geo;
 extern crate geo_geojson;
 extern crate num_cpus;

@@ -5,7 +5,7 @@ use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
 
-use crossbeam::channel;
+use crossbeam_channel as channel;
 use geo::prelude::*;
 use geo::Point;
 use prog_rs::prelude::*;

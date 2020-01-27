@@ -5,7 +5,7 @@ authors = ["Rémi Dupré <r.dupre@qwant.com>"]
 edition = "2018"
 
 [dependencies]
-crossbeam = "0.7"
+crossbeam-channel = "0.4"
 geo = "0.12"
 geo-geojson = "0.1"
 lazy_static = "1.4"
