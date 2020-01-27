@@ -14,6 +14,7 @@ extern crate structopt;
 mod address;
 mod db_hashes;
 mod dedupe;
+mod utils;
 
 use std::convert::TryFrom;
 use std::path::PathBuf;
@@ -118,25 +119,25 @@ fn main() -> rusqlite::Result<()> {
         params.osm_db.len()
     );
 
-    // for path in params.osm_db {
-    //     load_from_sqlite(
-    //         &mut deduplication,
-    //         path,
-    //         |addr| !is_in_france(addr),
-    //         |_| PRIORITY_OSM,
-    //     )
-    //     .expect("failed to load addresses from database");
-    // }
+    for path in params.osm_db {
+        load_from_sqlite(
+            &mut deduplication,
+            path,
+            |addr| !is_in_france(addr),
+            |_| PRIORITY_OSM,
+        )
+        .expect("failed to load addresses from database");
+    }
 
     println!(
         "Loading OpenAddress addresses from {} SQLite databases",
         params.openaddress_db.len()
     );
 
-    // for path in params.openaddress_db {
-    //     load_from_sqlite(&mut deduplication, path, |_| true, |_| PRIORITY_OPENADDRESS)
-    //         .expect("failed to load addresses from database");
-    // }
+    for path in params.openaddress_db {
+        load_from_sqlite(&mut deduplication, path, |_| true, |_| PRIORITY_OPENADDRESS)
+            .expect("failed to load addresses from database");
+    }
 
     // --- Apply deduplication
 

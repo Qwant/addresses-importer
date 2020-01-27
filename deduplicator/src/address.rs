@@ -56,3 +56,19 @@ impl Address {
         address_from_sqlite_row_with_prefix!("", row)
     }
 }
+
+impl Default for Address {
+    fn default() -> Self {
+        Address {
+            lat: 0.,
+            lon: 0.,
+            number: None,
+            street: None,
+            unit: None,
+            city: None,
+            district: None,
+            region: None,
+            postcode: None,
+        }
+    }
+}

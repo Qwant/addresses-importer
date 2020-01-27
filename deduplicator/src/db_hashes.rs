@@ -72,20 +72,24 @@ impl DbHashes {
         ))
     }
 
-    pub fn count_addresses(&self) -> rusqlite::Result<isize> {
+    fn count_table_entries(&self, table: &str) -> rusqlite::Result<isize> {
         self.get_conn()?.query_row(
-            &format!("SELECT COUNT(*) FROM {};", TABLE_ADDRESSES),
+            &format!("SELECT COUNT(*) FROM {};", table),
             NO_PARAMS,
             |row: &rusqlite::Row| row.get(0),
         )
     }
 
+    pub fn count_addresses(&self) -> rusqlite::Result<isize> {
+        self.count_table_entries(TABLE_ADDRESSES)
+    }
+
+    pub fn count_hashes(&self) -> rusqlite::Result<isize> {
+        self.count_table_entries(TABLE_HASHES)
+    }
+
     pub fn count_to_delete(&self) -> rusqlite::Result<isize> {
-        self.get_conn()?.query_row(
-            &format!("SELECT COUNT(*) FROM {};", TABLE_TO_DELETE),
-            NO_PARAMS,
-            |row: &rusqlite::Row| row.get(0),
-        )
+        self.count_table_entries(TABLE_TO_DELETE)
     }
 
     pub fn get_inserter<'c, 't>(
@@ -94,10 +98,8 @@ impl DbHashes {
         Inserter::new(tran)
     }
 
-    pub fn feasible_duplicates<'c>(
-        conn: &'c Connection,
-    ) -> rusqlite::Result<CollisionsIterable<'c>> {
-        CollisionsIterable::prepare(conn)
+    pub fn get_sorted_hashes<'c>(conn: &'c Connection) -> rusqlite::Result<SortedHashesIter<'c>> {
+        SortedHashesIter::prepare(conn)
     }
 
     pub fn apply_addresses_to_delete(&self) -> rusqlite::Result<usize> {
@@ -206,45 +208,48 @@ impl<'c, 't> Inserter<'c, 't> {
 //  \____\___/|_|_|_|___/_|\___/|_| |_|___/ |___|\__\___|_|
 //
 
-pub struct CollisionsIterable<'c>(Statement<'c>);
+#[derive(Debug)]
+pub struct HashIterItem {
+    pub address: Address,
+    pub hash: i64,
+    pub id: i64,
+    pub rank: f64,
+}
 
-impl<'c> CollisionsIterable<'c> {
+impl Default for HashIterItem {
+    fn default() -> Self {
+        Self {
+            address: Address::default(),
+            hash: 0,
+            id: -1,
+            rank: 0.,
+        }
+    }
+}
+
+pub struct SortedHashesIter<'c>(Statement<'c>);
+
+impl<'c> SortedHashesIter<'c> {
     pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
-        Ok(CollisionsIterable(conn.prepare(&format!(
+        Ok(SortedHashesIter(conn.prepare(&format!(
             "
                 SELECT DISTINCT
-                    addr_1.rowid        AS addr_1_id,
-                    addr_1.lat          AS addr_1_lat,
-                    addr_1.lon          AS addr_1_lon,
-                    addr_1.number       AS addr_1_number,
-                    addr_1.street       AS addr_1_street,
-                    addr_1.unit         AS addr_1_unit,
-                    addr_1.city         AS addr_1_city,
-                    addr_1.district     AS addr_1_district,
-                    addr_1.region       AS addr_1_region,
-                    addr_1.postcode     AS addr_1_postcode,
-                    addr_1.rank         AS addr_1_rank,
-                    addr_2.rowid        AS addr_2_id,
-                    addr_2.lat          AS addr_2_lat,
-                    addr_2.lon          AS addr_2_lon,
-                    addr_2.number       AS addr_2_number,
-                    addr_2.street       AS addr_2_street,
-                    addr_2.unit         AS addr_2_unit,
-                    addr_2.city         AS addr_2_city,
-                    addr_2.district     AS addr_2_district,
-                    addr_2.region       AS addr_2_region,
-                    addr_2.postcode     AS addr_2_postcode,
-                    addr_2.rank         AS addr_2_rank
-                FROM         {hashes}   AS hash_1
-                CROSS JOIN   {hashes}   AS hash_2
-                CROSS JOIN {addresses}  AS addr_1
-                CROSS JOIN {addresses}  AS addr_2
-                WHERE (
-                    addr_1.rowid < addr_2.rowid
-                    AND hash_1.hash = hash_2.hash
-                    AND addr_1.rowid = hash_1.address
-                    AND addr_2.rowid = hash_2.address
-                );
+                    addr.rowid      AS id,
+                    addr.lat        AS lat,
+                    addr.lon        AS lon,
+                    addr.number     AS number,
+                    addr.street     AS street,
+                    addr.unit       AS unit,
+                    addr.city       AS city,
+                    addr.district   AS district,
+                    addr.region     AS region,
+                    addr.postcode   AS postcode,
+                    addr.rank       AS rank,
+                    hash.hash       AS hash
+                FROM  {hashes}   AS hash
+                JOIN {addresses} AS addr
+                    ON hash.address = addr.rowid
+                ORDER BY hash.hash;
             ",
             addresses = TABLE_ADDRESSES,
             hashes = TABLE_HASHES
@@ -253,24 +258,16 @@ impl<'c> CollisionsIterable<'c> {
 
     pub fn iter<'s>(
         &'s mut self,
-    ) -> rusqlite::Result<
-        impl Iterator<Item = rusqlite::Result<((i64, Address, f64), (i64, Address, f64))>> + 's,
-    > {
+    ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<HashIterItem>> + 's> {
         let Self(stmt) = self;
 
         Ok(stmt.query_map(NO_PARAMS, |row| {
-            Ok((
-                (
-                    row.get("addr_1_id")?,
-                    address_from_sqlite_row_with_prefix!("addr_1_", row)?,
-                    row.get("addr_1_rank")?,
-                ),
-                (
-                    row.get("addr_2_id")?,
-                    address_from_sqlite_row_with_prefix!("addr_2_", row)?,
-                    row.get("addr_2_rank")?,
-                ),
-            ))
+            Ok(HashIterItem {
+                address: Address::from_sqlite_row(&row)?,
+                hash: row.get("hash")?,
+                id: row.get("id")?,
+                rank: row.get("rank")?,
+            })
         })?)
     }
 }

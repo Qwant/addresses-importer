@@ -1,5 +1,6 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::iter;
 use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
@@ -7,13 +8,13 @@ use std::thread;
 use crossbeam::channel;
 use geo::prelude::*;
 use geo::Point;
-use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use rpostal;
 use rprogress::prelude::*;
-use rusqlite::{DropBehavior, Error::SqliteFailure};
+use rusqlite::DropBehavior;
 
 use crate::address::Address;
-use crate::db_hashes::DbHashes;
+use crate::db_hashes::{DbHashes, HashIterItem};
+use crate::utils::is_constraint_violation_error;
 
 const CHANNEL_SIZES: usize = 1000;
 
@@ -91,30 +92,25 @@ impl Dedupe {
             let mut inserter = DbHashes::get_inserter(&mut tran).expect("failed to init inserter");
 
             for (address, rank, hashes) in hash_receiver {
-                match inserter.insert_address(&address, rank) {
+                let addr_id = inserter.insert_address(&address, rank);
+
+                match addr_id {
                     Ok(addr_id) => {
                         for hash in hashes {
-                            match inserter.insert_hash(addr_id, hash as i64) {
-                                Ok(_)
-                                | Err(SqliteFailure(
-                                    libsqlite3_sys::Error {
-                                        code: ConstraintViolation,
-                                        extended_code: _,
-                                    },
-                                    _,
-                                )) => (),
-                                Err(e) => eprintln!("failed inserting hash: {}", e),
-                            }
+                            inserter
+                                .insert_hash(addr_id, hash as i64)
+                                .map_err(|err| {
+                                    if !is_constraint_violation_error(&err) {
+                                        eprintln!("failed inserting hash: {}", err);
+                                    }
+                                })
+                                .ok();
                         }
                     }
-                    Err(SqliteFailure(
-                        libsqlite3_sys::Error {
-                            code: ConstraintViolation,
-                            extended_code: _,
-                        },
-                        _,
-                    )) => (),
-                    Err(e) => eprintln!("failed inserting address: {}", e),
+                    Err(err) if !is_constraint_violation_error(&err) => {
+                        eprintln!("failed inserting address: {}", err);
+                    }
+                    _ => (),
                 }
             }
         });
@@ -136,17 +132,19 @@ impl Dedupe {
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
         println!("Build index on hashes");
-        self.db.create_hashes_index()?;
+        // self.db.create_hashes_index()?;
 
         // --- Query collisions from DB
         let count_addresses_before = self.db.count_addresses()?;
+        let count_hashes = self.db.count_hashes()?;
+
         println!(
-            "Query SQLite for hash collisions ({} addresses)",
-            count_addresses_before
+            "Compute hash collisions ({} addresses, {} hashes)",
+            count_addresses_before, count_hashes
         );
 
         let conn_get_collisions = self.db.get_conn()?;
-        let mut collisions = DbHashes::feasible_duplicates(&conn_get_collisions)?;
+        let mut sorted_hashes = DbHashes::get_sorted_hashes(&conn_get_collisions)?;
 
         // Eliminate false positives in parallel using following pipeline:
         //
@@ -163,7 +161,7 @@ impl Dedupe {
         // [    del_receiver    ] writter thread
 
         let nb_workers: usize = num_cpus::get() - 2;
-        let (col_sender, col_receiver) = channel::bounded(CHANNEL_SIZES);
+        let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNEL_SIZES);
         let (del_sender, del_receiver) = channel::bounded(CHANNEL_SIZES);
 
         // --- Init worker threads
@@ -173,13 +171,30 @@ impl Dedupe {
             let del_sender = del_sender.clone();
 
             thread::spawn(move || {
-                for ((id_1, addr_1, rank_1), (id_2, addr_2, rank_2)) in col_receiver {
-                    if is_duplicate(&POSTAL_CLASSIFIER, &addr_1, &addr_2) {
-                        let to_delete = if rank_1 > rank_2 { id_1 } else { id_2 };
-                        del_sender.send(to_delete).expect(
-                            "failed to send id to delete: channel may have closed too early",
-                        );
+                for mut pack in col_receiver {
+                    if pack.len() > 1000 {
+                        eprintln!("Skipping pack of length {}", pack.len());
+                        continue;
                     }
+
+                    pack.sort_by(|pack_1, pack_2| {
+                        (pack_1.rank, pack_1.id)
+                            .partial_cmp(&(pack_2.rank, pack_2.id))
+                            .unwrap_or_else(|| pack_1.id.cmp(&pack_2.id))
+                    });
+
+                    for j in 0..pack.len() {
+                        for i in 0..j {
+                            if is_duplicate(&POSTAL_CLASSIFIER, &pack[i].address, &pack[j].address)
+                            {
+                                del_sender.send(pack[i].id).expect(
+                                    "failed sending id to delet: channel may have closed to early",
+                                );
+                            }
+                        }
+                    }
+
+                    del_sender.send(0).unwrap();
                 }
             });
         }
@@ -208,9 +223,34 @@ impl Dedupe {
 
         // --- Send conflicting pairs into channels
 
-        for collision in collisions.iter()?.progress() {
+        // Pack conflicting items together
+        let conflicting_packs = sorted_hashes
+            .iter()?
+            .progress()
+            .with_iter_size(count_hashes as usize)
+            .filter_map(|item| {
+                item.map_err(|err| eprintln!("failed retrieving hash: {}", err))
+                    .ok()
+            })
+            .chain(iter::once(HashIterItem::default()))
+            .scan(Vec::new(), |pack: &mut Vec<HashIterItem>, item| {
+                Some({
+                    if pack.first().map(|addr| addr.hash) == Some(item.hash) {
+                        pack.push(item);
+                        None
+                    } else if pack.len() > 1 {
+                        Some(std::mem::replace(pack, vec![item]))
+                    } else {
+                        pack.clear();
+                        None
+                    }
+                })
+            })
+            .filter_map(|x| x);
+
+        for pack in conflicting_packs {
             col_sender
-                .send(collision?)
+                .send(pack)
                 .expect("failed to send collision: channel may have closed too early");
         }
 
