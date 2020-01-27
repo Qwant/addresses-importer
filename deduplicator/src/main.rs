@@ -60,7 +60,7 @@ fn load_from_sqlite<F, R>(
 ) -> rusqlite::Result<()>
 where
     F: Fn(&Address) -> bool,
-    R: Fn(&Address) -> f64,
+    R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
     let input_conn = Connection::open(&path)?;
     let nb_addresses = usize::try_from(input_conn.query_row(
@@ -80,13 +80,9 @@ where
             addr.map_err(|e| eprintln!("failed to read address from DB: {}", e))
                 .ok()
         })
-        .filter(filter)
-        .map(|addr| {
-            let rank = ranking(&addr);
-            (addr, rank)
-        });
+        .filter(filter);
 
-    deduplication.load_addresses(addresses)
+    deduplication.load_addresses(addresses, ranking)
 }
 
 fn main() -> rusqlite::Result<()> {

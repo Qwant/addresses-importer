@@ -37,15 +37,19 @@ impl Dedupe {
         })
     }
 
-    pub fn load_addresses(
+    pub fn load_addresses<R>(
         &mut self,
-        addresses: impl Iterator<Item = (Address, f64)>,
-    ) -> rusqlite::Result<()> {
+        addresses: impl Iterator<Item = Address>,
+        ranking: R,
+    ) -> rusqlite::Result<()>
+    where
+        R: Fn(&Address) -> f64 + Clone + Send + 'static,
+    {
         // Compute hashes in parallel using following pipeline:
         //
         // [     addr_sender      ] main thread
         //            |
-        //            |  (address, rank)
+        //            |  address
         //            v
         // [    addr_receiver     ]
         // [         |||          ] worker threads
@@ -64,10 +68,13 @@ impl Dedupe {
         for _ in 0..nb_workers {
             let addr_receiver = addr_receiver.clone();
             let hash_sender = hash_sender.clone();
+            let ranking = ranking.clone();
 
             thread::spawn(move || {
-                for (address, rank) in addr_receiver {
+                for address in addr_receiver {
+                    let rank = ranking(&address);
                     let hashes: Vec<_> = hash_address(&POSTAL_CLASSIFIER, &address).collect();
+
                     hash_sender
                         .send((address, rank, hashes))
                         .expect("failed sending hashes: channel may have closed too early");
@@ -117,9 +124,9 @@ impl Dedupe {
 
         // --- Send addresses through channel
 
-        for (address, rank) in addresses {
+        for address in addresses {
             addr_sender
-                .send((address, rank))
+                .send(address)
                 .expect("failed sending address: channel may have closed to early");
         }
 
