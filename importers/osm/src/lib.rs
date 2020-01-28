@@ -233,7 +233,8 @@ impl StoreObjs for DBNodes {
 
 impl Drop for DBNodes {
     fn drop(&mut self) {
-        self.flush_buffer();
+        let _ = self.connection.close(); // we ignore any potential error
+        let _ = fs::remove_file(self.db_file); // we ignore any potential error bis
     }
 }
 
