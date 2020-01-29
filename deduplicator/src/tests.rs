@@ -35,19 +35,21 @@ fn load_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Check that no item is removed from a database without duplicates.
 #[test]
-fn check_database_complete() -> rusqlite::Result<()> {
-    // Read input database
-    let input_path = PathBuf::from("src/data/tests/db_1.sql");
-    let mut input_addresses = load_addresses_from_db(&load_db(&input_path)?, "addresses")?;
-
-    // Read output database
+fn database_complete() -> rusqlite::Result<()> {
     let tmp_dir = TempDir::new("output").unwrap();
     let output_path = tmp_dir.path().join("addresses.db");
+    let input_path = PathBuf::from("src/data/tests/db_1.sql");
+
+    // Read input database
+    let mut input_addresses = load_addresses_from_db(&load_db(&input_path)?, "addresses")?;
     let mut dedupe = Dedupe::new(tmp_dir.path().join("addresses.db"))?;
     dedupe.load_addresses(input_addresses.clone().into_iter(), |_| 1.)?;
     dedupe.compute_duplicates()?;
     dedupe.apply_and_clean()?;
+
+    // Read output database
     let mut output_addresses =
         load_addresses_from_db(&Connection::open(&output_path)?, "addresses")?;
 
@@ -66,20 +68,22 @@ fn check_database_complete() -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Check that all perfect duplicates are removed from the database.
 #[test]
-fn test_remove_exact_duplicates() -> rusqlite::Result<()> {
-    // Read input database
-    let input_path = PathBuf::from("src/data/tests/db_1.sql");
-    let mut input_addresses = load_addresses_from_db(&load_db(&input_path)?, "addresses")?;
-
-    // Read output database
+fn remove_exact_duplicates() -> rusqlite::Result<()> {
     let tmp_dir = TempDir::new("output").unwrap();
     let output_path = tmp_dir.path().join("addresses.db");
+    let input_path = PathBuf::from("src/data/tests/db_1.sql");
+
+    // Read input database
+    let mut input_addresses = load_addresses_from_db(&load_db(&input_path)?, "addresses")?;
     let mut dedupe = Dedupe::new(tmp_dir.path().join("addresses.db"))?;
     dedupe.load_addresses(input_addresses.clone().into_iter(), |_| 1.)?;
     dedupe.load_addresses(input_addresses.clone().into_iter(), |_| 1.)?;
     dedupe.compute_duplicates()?;
     dedupe.apply_and_clean()?;
+
+    // Read output database
     let mut output_addresses =
         load_addresses_from_db(&Connection::open(&output_path)?, "addresses")?;
 
