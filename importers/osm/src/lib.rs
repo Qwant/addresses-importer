@@ -258,7 +258,7 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
             }
             OsmObj::Relation(r) => {
                 r.refs.iter().filter(|r| r.member.is_node()).count() > 0 &&
-                r.tags.iter().any(|x| x.0 == "associatedStreet") &&
+                r.tags.iter().any(|x| x.0 == "type" && x.1 == "associatedStreet") &&
                 r.tags.iter().any(|x| x.0 == "name")
             }
         }
