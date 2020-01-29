@@ -222,7 +222,7 @@ impl<'c> SortedHashesIter<'c> {
     pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
         Ok(SortedHashesIter(conn.prepare(&format!(
             "
-                SELECT DISTINCT
+                SELECT
                     addr.id         AS id,
                     addr.lat        AS lat,
                     addr.lon        AS lon,
