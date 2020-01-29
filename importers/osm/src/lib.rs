@@ -10,63 +10,9 @@ use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
 
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
 
+use tools::{Address, CompatibleDB};
+
 const TAGS_TO_KEEP: &[&str] = &["addr:housenumber", "addr:street", "addr:unit", "addr:city", "addr:district", "addr:region", "addr:postcode"];
-
-struct Address {
-    lat: f64,
-    lon: f64,
-    number: Option<String>,
-    street: Option<String>,
-    unit: Option<String>,
-    city: Option<String>,
-    district: Option<String>,
-    region: Option<String>,
-    postcode: Option<String>,
-}
-
-impl Address {
-    fn new(tags: &Tags, lat: f64, lon: f64) -> Address {
-        let mut addr = Address {
-            lat,
-            lon,
-            number: None,
-            street: None,
-            unit: None,
-            city: None,
-            district: None,
-            region: None,
-            postcode: None,
-        };
-
-        for (tag, value) in tags.iter() {
-            match tag.as_str() {
-                "addr:housenumber" => {
-                    addr.number = Some(value.to_owned());
-                }
-                "addr:street" => {
-                    addr.street = Some(value.to_owned());
-                }
-                "addr:unit" => {
-                    addr.unit = Some(value.to_owned());
-                }
-                "addr:city" => {
-                    addr.city = Some(value.to_owned());
-                }
-                "addr:district" => {
-                    addr.district = Some(value.to_owned());
-                }
-                "addr:region" => {
-                    addr.region = Some(value.to_owned());
-                }
-                "addr:postcode" => {
-                    addr.postcode = Some(value.to_owned());
-                }
-                _ => {}
-            }
-        }
-        addr
-    }
-}
 
 macro_rules! get_kind {
     ($obj:expr) => {
@@ -78,6 +24,48 @@ macro_rules! get_kind {
             &2
         }
     }
+}
+
+fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
+    let mut addr = Address {
+        lat,
+        lon,
+        number: None,
+        street: None,
+        unit: None,
+        city: None,
+        district: None,
+        region: None,
+        postcode: None,
+    };
+
+    for (tag, value) in tags.iter() {
+        match tag.as_str() {
+            "addr:housenumber" => {
+                addr.number = Some(value.to_owned());
+            }
+            "addr:street" => {
+                addr.street = Some(value.to_owned());
+            }
+            "addr:unit" => {
+                addr.unit = Some(value.to_owned());
+            }
+            "addr:city" => {
+                addr.city = Some(value.to_owned());
+            }
+            "addr:district" => {
+                addr.district = Some(value.to_owned());
+            }
+            "addr:region" => {
+                addr.region = Some(value.to_owned());
+            }
+            "addr:postcode" => {
+                addr.postcode = Some(value.to_owned());
+            }
+            _ => {}
+        }
+    }
+    addr
 }
 
 struct DBNodes {
@@ -250,206 +238,6 @@ impl Drop for DBNodes {
     }
 }
 
-pub struct DB {
-    conn: Connection,
-    buffer: Vec<Address>,
-    db_buffer_size: usize,
-}
-
-impl DB {
-    fn new(db_file: &str, db_buffer_size: usize, remove_db_data: bool) -> Result<DB, String> {
-        if remove_db_data {
-            let _ = fs::remove_file(db_file); // we ignore any potential error
-        }
-        let conn = Connection::open(db_file)
-            .map_err(|e| format!("failed to open SQLITE connection: {}", e))?;
-
-        if remove_db_data {
-            conn.execute("DROP TABLE IF EXISTS addresses", NO_PARAMS)
-                .expect("failed to drop addresses");
-            conn.execute("DROP TABLE IF EXISTS addresses_errors", NO_PARAMS)
-                .expect("failed to drop errors");
-        }
-        conn.execute(
-            r#"CREATE TABLE IF NOT EXISTS addresses(
-                lat REAL NOT NULL,
-                lon REAL NOT NULL,
-                number TEXT,
-                street TEXT NOT NULL,
-                unit TEXT,
-                city TEXT,
-                district TEXT,
-                region TEXT,
-                postcode TEXT,
-                PRIMARY KEY (lat, lon, number, street, city)
-            )"#,
-            NO_PARAMS,
-        )
-        .map_err(|e| format!("failed to create table: {}", e))?;
-        conn.execute(
-            r#"CREATE TABLE IF NOT EXISTS addresses_errors(
-                lat REAL,
-                lon REAL,
-                number TEXT,
-                street TEXT,
-                unit TEXT,
-                city TEXT,
-                district TEXT,
-                region TEXT,
-                postcode TEXT,
-                kind TEXT
-            )"#,
-            NO_PARAMS,
-        )
-        .map_err(|e| format!("failed to create error table: {}", e))?;
-        Ok(DB {
-            conn,
-            buffer: Vec::with_capacity(db_buffer_size),
-            db_buffer_size,
-        })
-    }
-
-    fn flush_buffer(&mut self) {
-        let mut tx = self.conn.transaction().expect("failed to open transaction");
-        tx.set_drop_behavior(DropBehavior::Ignore);
-
-        let mut errors = {
-            let mut stmt = tx
-                .prepare(
-                    "INSERT INTO addresses(
-                    lat,
-                    lon,
-                    number,
-                    street,
-                    unit,
-                    city,
-                    district,
-                    region,
-                    postcode
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                )
-                .expect("failed to prepare statement");
-
-            self.buffer
-                .drain(..)
-                .filter_map(|obj| {
-                    if let Err(e) = stmt.execute(&[
-                        &obj.lat as &dyn ToSql,
-                        &obj.lon,
-                        &obj.number,
-                        &obj.street,
-                        &obj.unit,
-                        &obj.city,
-                        &obj.district,
-                        &obj.region,
-                        &obj.postcode,
-                    ]) {
-                        Some((obj, e.to_string()))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-        if !errors.is_empty() {
-            let mut stmt = tx
-                .prepare(
-                    "INSERT INTO addresses_errors(
-                    lat,
-                    lon,
-                    number,
-                    street,
-                    unit,
-                    city,
-                    district,
-                    region,
-                    postcode,
-                    kind
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                )
-                .expect("failed to prepare error statement");
-
-            for (obj, err) in errors.drain(..) {
-                stmt.execute(&[
-                    &obj.lat as &dyn ToSql,
-                    &obj.lon,
-                    &obj.number,
-                    &obj.street,
-                    &obj.unit,
-                    &obj.city,
-                    &obj.district,
-                    &obj.region,
-                    &obj.postcode,
-                    &err,
-                ])
-                .expect("failed to insert into errors");
-            }
-        }
-
-        tx.commit().expect("commit failed");
-    }
-
-    fn insert(&mut self, addr: Address) {
-        if addr.street.is_none() {
-            return;
-        }
-        self.buffer.push(addr);
-        if self.buffer.len() >= self.db_buffer_size {
-            self.flush_buffer();
-        }
-    }
-
-    pub fn get_nb_cities(&self) -> i64 {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT COUNT(*) FROM addresses GROUP BY city")
-            .expect("failed to prepare");
-        let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
-            .expect("query_map failed");
-        iter.next().expect("no count???").expect("failed")
-    }
-
-    pub fn get_nb_addresses(&self) -> i64 {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT COUNT(*) FROM addresses")
-            .expect("failed to prepare");
-        let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
-            .expect("query_map failed");
-        iter.next().expect("no count???").expect("failed")
-    }
-
-    pub fn get_nb_errors(&self) -> i64 {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT COUNT(*) FROM addresses_errors")
-            .expect("failed to prepare");
-        let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
-            .expect("query_map failed");
-        iter.next().expect("no count???").expect("failed")
-    }
-
-    pub fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT kind, COUNT(*) FROM addresses_errors GROUP BY kind")
-            .expect("failed to prepare");
-        stmt.query_map(NO_PARAMS, |row| Ok((row.get(0)?, row.get(1)?)))
-            .expect("query_map failed")
-            .map(|x| x.expect("failed"))
-            .collect()
-    }
-}
-
-impl Drop for DB {
-    fn drop(&mut self) {
-        self.flush_buffer();
-    }
-}
-
 fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
     let mut reader = OsmPbfReader::new(File::open(&pbf_file).expect(&format!(
         "Failed to open file `{}`",
@@ -481,19 +269,19 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
     db_nodes
 }
 
-pub fn import_addresses<P: AsRef<Path>>(
+pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(
     db_file_name: &str,
     pbf_file: P,
     remove_db_data: bool,
-) -> DB {
+) -> T::DB {
     let db_nodes = get_nodes(pbf_file);
-    let mut db = DB::new(db_file_name, 1000, remove_db_data).expect("Failed to create DB");
+    let mut db = T::new(db_file_name, 1000, remove_db_data).expect("Failed to create DB");
     db_nodes.iter_objs(|obj, nodes| {
         match obj {
-            OsmObj::Node(node) => db.insert(Address::new(&node.tags, node.lat(), node.lon())),
+            OsmObj::Node(node) => db.insert(new_address(&node.tags, node.lat(), node.lon())),
             OsmObj::Way(way) => {
                 if nodes.len() == 1 {
-                    db.insert(Address::new(&way.tags, nodes[0].lat(), nodes[0].lon()));
+                    db.insert(new_address(&way.tags, nodes[0].lat(), nodes[0].lon()));
                     return;
                 }
                 let polygon = format!(
@@ -509,7 +297,7 @@ pub fn import_addresses<P: AsRef<Path>>(
                         (Ok(lon), Ok(lat)) => (lon, lat),
                         _ => return,
                     };
-                    db.insert(Address::new(&way.tags, lat, lon));
+                    db.insert(new_address(&way.tags, lat, lon));
                 } else {
                     return;
                 }
@@ -523,7 +311,7 @@ pub fn import_addresses<P: AsRef<Path>>(
                     if !node.tags.iter().any(|t| t.0 == "addr:housenumber") {
                         return;
                     }
-                    let mut addr = Address::new(&node.tags, node.lat(), node.lon());
+                    let mut addr = new_address(&node.tags, node.lat(), node.lon());
                     addr.street = Some(addr_name.clone());
                     db.insert(addr);
                 }

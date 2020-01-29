@@ -9,6 +9,7 @@ bincode = "1.1"
 geos = "5.0"
 osmpbfreader = "0.13.4"
 rusqlite = "0.20"
+tools = { path = "../../tools" }
 
 [[bin]]
 name = "osm"
