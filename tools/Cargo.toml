@@ -1,0 +1,11 @@
+[package]
+name = "tools"
+version = "0.1.0"
+authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+rusqlite = "0.20"
+
+[lib]
+name = "tools"
