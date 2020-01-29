@@ -10,11 +10,11 @@ use geo::Point;
 use itertools::Itertools;
 use prog_rs::prelude::*;
 use rpostal;
-use rusqlite::DropBehavior;
+use rusqlite::{Connection, DropBehavior};
+use tools::{Address, CompatibleDB};
 
-use crate::address::Address;
-use crate::db_hashes::{DbHashes, HashIterItem};
-use crate::utils::is_constraint_violation_error;
+use crate::db_hashes::{DbHashes, HashIterItem, Inserter};
+use crate::utils::{is_constraint_violation_error, postal_repr};
 
 const CHANNEL_SIZES: usize = 1000;
 
@@ -45,95 +45,12 @@ impl Dedupe {
     where
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
     {
-        // Compute hashes in parallel using following pipeline:
-        //
-        // [     addr_sender      ] main thread
-        //            |
-        //            |  address
-        //            v
-        // [    addr_receiver     ]
-        // [         |||          ] worker threads
-        // [     hash_sender      ]
-        //            |
-        //            |  (address, rank, hashes)
-        //            v
-        // [     hash_receiver    ] writter thread
-
-        let nb_workers: usize = num_cpus::get() - 2;
-        let (addr_sender, addr_receiver) = channel::bounded(CHANNEL_SIZES);
-        let (hash_sender, hash_receiver) = channel::bounded(CHANNEL_SIZES);
-
-        // --- Init worker threads
-
-        for _ in 0..nb_workers {
-            let addr_receiver = addr_receiver.clone();
-            let hash_sender = hash_sender.clone();
-            let ranking = ranking.clone();
-
-            thread::spawn(move || {
-                for address in addr_receiver {
-                    let rank = ranking(&address);
-                    let hashes: Vec<_> = hash_address(&POSTAL_CLASSIFIER, &address).collect();
-
-                    hash_sender
-                        .send((address, rank, hashes))
-                        .expect("failed sending hashes: channel may have closed too early");
-                }
-            });
-        }
-
-        // Drop channels that were cloned before being sent
-        drop(addr_receiver);
-        drop(hash_sender);
-
-        // --- Init writter thread
-
-        let mut conn = self
-            .db
-            .get_conn()
-            .expect("failed to open SQLite connection");
-
-        let writter_thread = thread::spawn(move || {
-            let mut tran = conn.transaction().expect("failed to init transaction");
-            tran.set_drop_behavior(DropBehavior::Commit);
-            let mut inserter = DbHashes::get_inserter(&mut tran).expect("failed to init inserter");
-
-            for (address, rank, hashes) in hash_receiver {
-                let addr_id = inserter.insert_address(&address, rank);
-
-                match addr_id {
-                    Ok(addr_id) => {
-                        for hash in hashes {
-                            inserter
-                                .insert_hash(addr_id, hash as i64)
-                                .map_err(|err| {
-                                    if !is_constraint_violation_error(&err) {
-                                        eprintln!("failed inserting hash: {}", err);
-                                    }
-                                })
-                                .ok();
-                        }
-                    }
-                    Err(err) if !is_constraint_violation_error(&err) => {
-                        eprintln!("failed inserting address: {}", err);
-                    }
-                    _ => (),
-                }
-            }
-        });
-
-        // --- Send addresses through channel
+        let mut db_insert = DbInserter::new(self.db.get_conn()?, ranking);
 
         for address in addresses {
-            addr_sender
-                .send(address)
-                .expect("failed sending address: channel may have closed to early");
+            db_insert.insert(address);
         }
 
-        drop(addr_sender);
-        writter_thread
-            .join()
-            .expect("failed joining writter thread");
         Ok(())
     }
 
@@ -204,6 +121,7 @@ impl Dedupe {
             });
         }
 
+        // Drop channels that were cloned before being sent
         drop(col_receiver);
         drop(del_sender);
 
@@ -291,7 +209,7 @@ fn hash_address(
     };
 
     rpostal_classifier
-        .near_dupe_hashes(&address.to_postal_repr(), &options)
+        .near_dupe_hashes(&postal_repr(address), &options)
         .into_iter()
         .map(|pre_hash| {
             let mut hash = DefaultHasher::new();
@@ -362,4 +280,136 @@ pub fn is_duplicate(
     };
 
     close_duplicate() || exact_duplicate()
+}
+
+//  ___                     _   _
+// |_ _|_ __  ___  ___ _ __| |_(_) ___  _ __
+//  | || '_ \/ __|/ _ \ '__| __| |/ _ \| '_ \
+//  | || | | \__ \  __/ |  | |_| | (_) | | | |
+// |___|_| |_|___/\___|_|   \__|_|\___/|_| |_|
+//
+//
+// Compute hashes in parallel using following pipeline:
+//
+// [     addr_sender      ] main thread
+//            |
+//            |  address
+//            v
+// [    addr_receiver     ]
+// [         |||          ] worker threads
+// [     hash_sender      ]
+//            |
+//            |  (address, rank, hashes)
+//            v
+// [     hash_receiver    ] writter thread
+
+pub struct DbInserter {
+    addr_sender: channel::Sender<Address>,
+    writter_thread: thread::JoinHandle<()>,
+}
+
+impl DbInserter {
+    pub fn new<R>(mut conn: Connection, ranking: R) -> Self
+    where
+        R: Fn(&Address) -> f64 + Clone + Send + 'static,
+    {
+        let nb_workers: usize = num_cpus::get() - 2;
+        let (addr_sender, addr_receiver) = channel::bounded(CHANNEL_SIZES);
+        let (hash_sender, hash_receiver) = channel::bounded(CHANNEL_SIZES);
+
+        // --- Init worker threads
+
+        for _ in 0..nb_workers {
+            let addr_receiver = addr_receiver.clone();
+            let hash_sender = hash_sender.clone();
+            let ranking = ranking.clone();
+
+            thread::spawn(move || {
+                for address in addr_receiver {
+                    let rank = ranking(&address);
+                    let hashes: Vec<_> = hash_address(&POSTAL_CLASSIFIER, &address).collect();
+
+                    hash_sender
+                        .send((address, rank, hashes))
+                        .expect("failed sending hashes: channel may have closed too early");
+                }
+            });Genre je query un truc dans une DB
+        }
+
+        // --- Init writter thread
+
+        let writter_thread = thread::spawn(move || {
+            let mut tran = conn.transaction().expect("failed to init transaction");
+            tran.set_drop_behavior(DropBehavior::Commit);
+            let mut inserter = DbHashes::get_inserter(&mut tran).expect("failed to init inserter");
+
+            for (address, rank, hashes) in hash_receiver {
+                let addr_id = inserter.insert_address(&address, rank);
+
+                match addr_id {
+                    Ok(addr_id) => {
+                        for hash in hashes {
+                            inserter
+                                .insert_hash(addr_id, hash as i64)
+                                .map_err(|err| {
+                                    if !is_constraint_violation_error(&err) {
+                                        eprintln!("failed inserting hash: {}", err);
+                                    }
+                                })
+                                .ok();
+                        }
+                    }
+                    Err(err) if !is_constraint_violation_error(&err) => {
+                        eprintln!("failed inserting address: {}", err);
+                    }
+                    _ => (),
+                }
+            }
+        });
+
+        Self {
+            addr_sender,
+            writter_thread,
+        }
+    }
+}
+
+impl Drop for DbInserter {
+    fn drop(&mut self) {
+        // Close sender channel, this will end writter threads
+        let (closed_sender, _) = channel::unbounded();
+        std::mem::replace(&mut self.addr_sender, closed_sender);
+
+        // Wait for writter thread to finish writting
+        let writter_thread = std::mem::replace(&mut self.writter_thread, thread::spawn(|| ()));
+        writter_thread
+            .join()
+            .expect("failed to join writter thread");
+    }
+}
+
+impl tools::CompatibleDB for DbInserter {
+    fn flush(&mut self) {}
+
+    fn insert(&mut self, addr: Address) {
+        self.addr_sender
+            .send(addr)
+            .expect("failed sending address: channel may have closed too early");
+    }
+
+    fn get_nb_cities(&self) -> i64 {
+        0
+    }
+
+    fn get_nb_addresses(&self) -> i64 {
+        0
+    }
+
+    fn get_nb_errors(&self) -> i64 {
+        0
+    }
+
+    fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)> {
+        Vec::new()
+    }
 }

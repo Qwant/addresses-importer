@@ -1,12 +1,33 @@
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
+use std::ffi::CString;
 use std::path::PathBuf;
 
-use crate::address::Address;
 use crate::dedupe::Dedupe;
 
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rusqlite::{Connection, Statement, NO_PARAMS};
+use tools::Address;
+
+pub fn postal_repr(address: &Address) -> Vec<rpostal::Address> {
+    [
+        ("house_number", &address.number),
+        ("road", &address.street),
+        ("unit", &address.unit),
+        ("city", &address.city),
+        ("state_district", &address.district),
+        ("country_region", &address.region),
+        ("postcode", &address.postcode),
+    ]
+    .into_iter()
+    .filter_map(|(key, val)| {
+        val.as_ref().map(|val| rpostal::Address {
+            label: CString::new(key.as_bytes()).unwrap(),
+            value: CString::new(val.as_bytes()).unwrap(),
+        })
+    })
+    .collect()
+}
 
 pub fn is_constraint_violation_error(err: &rusqlite::Error) -> bool {
     match err {
@@ -31,7 +52,7 @@ pub fn iter_addresses_stmt<'c>(
 pub fn iter_addresses_from_stmt<'s>(
     stmt: &'s mut Statement,
 ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<Address>> + 's> {
-    stmt.query_map(NO_PARAMS, Address::from_sqlite_row)
+    stmt.query_map(NO_PARAMS, |row| row.try_into())
 }
 
 pub fn load_from_sqlite<F, R>(

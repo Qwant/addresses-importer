@@ -1,6 +1,8 @@
-use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
+use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
+use std::convert::TryFrom;
 use std::fs;
 
+#[derive(Clone, Debug, PartialOrd, PartialEq)]
 pub struct Address {
     pub lat: f64,
     pub lon: f64,
@@ -11,6 +13,38 @@ pub struct Address {
     pub district: Option<String>,
     pub region: Option<String>,
     pub postcode: Option<String>,
+}
+
+impl Address {
+    pub const NB_FIELDS: usize = 9;
+
+    pub fn count_non_empty_fields(&self) -> usize {
+        2 + self.number.is_some() as usize
+            + self.street.is_some() as usize
+            + self.unit.is_some() as usize
+            + self.city.is_some() as usize
+            + self.district.is_some() as usize
+            + self.region.is_some() as usize
+            + self.postcode.is_some() as usize
+    }
+}
+
+impl<'r> TryFrom<&Row<'r>> for Address {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &Row<'r>) -> Result<Self, Self::Error> {
+        Ok(Address {
+            lat: row.get("lat")?,
+            lon: row.get("lon")?,
+            number: row.get("number")?,
+            street: row.get("street")?,
+            unit: row.get("unit")?,
+            city: row.get("city")?,
+            district: row.get("district")?,
+            region: row.get("region")?,
+            postcode: row.get("postcode")?,
+        })
+    }
 }
 
 pub struct DB {

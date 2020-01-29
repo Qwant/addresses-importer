@@ -8,9 +8,10 @@ edition = "2018"
 crossbeam-channel = "0.4"
 geo = "0.12"
 geo-geojson = "0.1"
+tools = { path = "../tools" }
 itertools = "0.8.2"
 lazy_static = "1.4"
-libsqlite3-sys = "0.17.1"
+libsqlite3-sys = "0.17"
 num_cpus = "1.12"
 rpostal = { git = "https://github.com/GuillaumeGomez/libpostal-rs.git" }
 prog_rs = "0.1"

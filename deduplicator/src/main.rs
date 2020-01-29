@@ -3,6 +3,7 @@ extern crate geo;
 extern crate geo_geojson;
 extern crate itertools;
 extern crate num_cpus;
+extern crate tools;
 #[macro_use]
 extern crate lazy_static;
 extern crate libsqlite3_sys;
@@ -11,12 +12,11 @@ extern crate rpostal;
 extern crate rusqlite;
 extern crate structopt;
 
-#[macro_use]
-mod address;
-mod db_hashes;
-mod dedupe;
 #[cfg(test)]
 mod tests;
+
+mod db_hashes;
+mod dedupe;
 mod utils;
 
 use std::path::PathBuf;
@@ -24,8 +24,8 @@ use std::path::PathBuf;
 use geo::algorithm::contains::Contains;
 use geo::{MultiPolygon, Point};
 use structopt::StructOpt;
+use tools::Address;
 
-use address::Address;
 use dedupe::Dedupe;
 use utils::load_from_sqlite;
 

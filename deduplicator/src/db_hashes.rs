@@ -1,8 +1,8 @@
+use std::convert::TryInto;
 use std::path::PathBuf;
 
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
-
-use crate::address::Address;
+use tools::Address;
 
 const TABLE_ADDRESSES: &str = "addresses";
 const TABLE_HASHES: &str = "_addresses_hashes";
@@ -252,7 +252,7 @@ impl<'c> SortedHashesIter<'c> {
 
         Ok(stmt.query_map(NO_PARAMS, |row| {
             Ok(HashIterItem {
-                address: Address::from_sqlite_row(&row)?,
+                address: row.try_into()?,
                 hash: row.get("hash")?,
                 id: row.get("id")?,
                 rank: row.get("rank")?,
