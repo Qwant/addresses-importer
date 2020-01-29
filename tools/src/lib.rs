@@ -19,22 +19,8 @@ pub struct DB {
     db_buffer_size: usize,
 }
 
-pub trait CompatibleDB {
-    type DB: CompatibleDB;
-
-    fn new(db_file: &str, db_buffer_size: usize, remove_db_data: bool) -> Result<Self::DB, String>;
-    fn flush(&mut self);
-    fn insert(&mut self, addr: Address);
-    fn get_nb_cities(&self) -> i64;
-    fn get_nb_addresses(&self) -> i64;
-    fn get_nb_errors(&self) -> i64;
-    fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)>;
-}
-
-impl CompatibleDB for DB {
-    type DB = DB;
-
-    fn new(db_file: &str, db_buffer_size: usize, remove_db_data: bool) -> Result<Self::DB, String> {
+impl DB {
+    pub fn new(db_file: &str, db_buffer_size: usize, remove_db_data: bool) -> Result<Self, String> {
         if remove_db_data {
             let _ = fs::remove_file(db_file); // we ignore any potential error
         }
@@ -85,7 +71,18 @@ impl CompatibleDB for DB {
             db_buffer_size,
         })
     }
+}
 
+pub trait CompatibleDB {
+    fn flush(&mut self);
+    fn insert(&mut self, addr: Address);
+    fn get_nb_cities(&self) -> i64;
+    fn get_nb_addresses(&self) -> i64;
+    fn get_nb_errors(&self) -> i64;
+    fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)>;
+}
+
+impl CompatibleDB for DB {
     fn flush(&mut self) {
         let mut tx = self.conn.transaction().expect("failed to open transaction");
         tx.set_drop_behavior(DropBehavior::Ignore);

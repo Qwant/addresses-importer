@@ -5,7 +5,7 @@ use std::path::Path;
 
 use geos::Geometry;
 
-use osmpbfreader::objects::{Node, NodeId, OsmId, Tags, Way};
+use osmpbfreader::objects::{Node, OsmId, Tags};
 use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
 
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
@@ -270,12 +270,10 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
 }
 
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(
-    db_file_name: &str,
     pbf_file: P,
-    remove_db_data: bool,
-) -> T::DB {
+    db: &mut T,
+) {
     let db_nodes = get_nodes(pbf_file);
-    let mut db = T::new(db_file_name, 1000, remove_db_data).expect("Failed to create DB");
     db_nodes.iter_objs(|obj, nodes| {
         match obj {
             OsmObj::Node(node) => db.insert(new_address(&node.tags, node.lat(), node.lon())),
@@ -318,5 +316,4 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(
             }
         }
     });
-    db
 }

@@ -1,12 +1,13 @@
 use std::env;
-use tools::{self, CompatibleDB};
+use tools::{self, CompatibleDB, DB};
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
     if args.len() < 2 {
         eprintln!("Expected PBF file path");
     }
-    let db = osm::import_addresses::<&str, tools::DB>("addresses.db", &args[1], true);
+    let mut db = DB::new("addressesdb", 1000, true).expect("Failed to create DB");
+    osm::import_addresses(&args[1], &mut db);
     println!(
         "Got {} addresses in {} cities (and {} errors)",
         db.get_nb_addresses(),
