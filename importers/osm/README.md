@@ -64,22 +64,18 @@ CREATE TABLE IF NOT EXISTS addresses_errors(
 You can use this importer as a library/dependency directly. The entry point is:
 
 ```rust
-fn import_addresses<P: AsRef<Path>>(
-    db_file_name: &str,
-    pbf_file: P,
-    remove_db_data: bool,
-) -> DB;
+fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(
+    folder: P,
+    db: &mut T,
+);
 ```
 
 The arguments are:
 
- * `db_file_name`: where the sqlite database will be stored
  * `pbf_file`: where the `.pdf` [OpenStreetMap] data file is located
- * `remove_db_data`: if `false` and if a `db_file_name` already exists, it won't be removed nor
-   overwritten.
+ * `db`: an object implementing `tools::CompatibleDB`
 
-It returns a `DB` objects. Please take a look at the generated documentation for more information
-about it. You can generate the documentation with this command:
+You can generate the documentation with this command:
 
 ```bash
 $ cargo doc
