@@ -8,7 +8,7 @@ edition = "2018"
 bincode = "1.1"
 geos = "5.0"
 osmpbfreader = "0.13.4"
-rusqlite = "0.20"
+rusqlite = "0.21"
 tools = { path = "../../tools" }
 
 [[bin]]

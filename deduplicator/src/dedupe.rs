@@ -11,9 +11,9 @@ use itertools::Itertools;
 use prog_rs::prelude::*;
 use rpostal;
 use rusqlite::{Connection, DropBehavior};
-use tools::{Address, CompatibleDB};
+use tools::Address;
 
-use crate::db_hashes::{DbHashes, HashIterItem, Inserter};
+use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::utils::{is_constraint_violation_error, postal_repr};
 
 const CHANNEL_SIZES: usize = 1000;
@@ -37,21 +37,11 @@ impl Dedupe {
         })
     }
 
-    pub fn load_addresses<R>(
-        &mut self,
-        addresses: impl Iterator<Item = Address>,
-        ranking: R,
-    ) -> rusqlite::Result<()>
+    pub fn get_db_inserter<R>(&mut self, ranking: R) -> rusqlite::Result<DbInserter>
     where
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
     {
-        let mut db_insert = DbInserter::new(self.db.get_conn()?, ranking);
-
-        for address in addresses {
-            db_insert.insert(address);
-        }
-
-        Ok(())
+        Ok(DbInserter::new(self.db.get_conn()?, ranking))
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
@@ -333,7 +323,7 @@ impl DbInserter {
                         .send((address, rank, hashes))
                         .expect("failed sending hashes: channel may have closed too early");
                 }
-            });Genre je query un truc dans une DB
+            });
         }
 
         // --- Init writter thread

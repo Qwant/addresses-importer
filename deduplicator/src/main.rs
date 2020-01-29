@@ -6,6 +6,8 @@ extern crate num_cpus;
 extern crate tools;
 #[macro_use]
 extern crate lazy_static;
+extern crate importer_openaddress;
+extern crate importer_osm;
 extern crate libsqlite3_sys;
 extern crate prog_rs;
 extern crate rpostal;
@@ -40,12 +42,20 @@ const PRIORITY_OPENADDRESS: f64 = 1.;
     about = "Deduplicate addresses from several sources."
 )]
 struct Params {
+    /// Path to data from OpenAddress
+    #[structopt(long)]
+    openaddress: Vec<PathBuf>,
+
+    /// Path to data from OSM
+    #[structopt(long)]
+    osm: Vec<PathBuf>,
+
     /// Path to data from OpenAddress as an SQLite database
-    #[structopt(short = "a", long)]
+    #[structopt(long)]
     openaddress_db: Vec<PathBuf>,
 
     /// Path to data from OSM as an SQLite database
-    #[structopt(short = "s", long)]
+    #[structopt(long)]
     osm_db: Vec<PathBuf>,
 
     /// Path to output database.
@@ -76,42 +86,54 @@ fn main() -> rusqlite::Result<()> {
     let params = Params::from_args();
     let mut deduplication = Dedupe::new(params.output)?;
 
-    // --- Read database from various sources
+    // --- Read database from OSM
 
-    println!(
-        "Loading OSM addresses from {} SQLite databases",
-        params.osm_db.len()
-    );
+    let osm_filter = |addr: &Address| !is_in_france(addr);
+    let osm_ranking = |addr: &Address| {
+        PRIORITY_OSM + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
+    };
 
     for path in params.osm_db {
+        println!("Read OSM from database: {:?}", &path);
         load_from_sqlite(
             &mut deduplication,
             path,
-            |addr| !is_in_france(addr),
-            |addr| {
-                PRIORITY_OSM
-                    + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
-            },
+            osm_filter.clone(),
+            osm_ranking.clone(),
         )
-        .expect("failed to load addresses from database");
+        .expect("failed to load OSM from database");
     }
 
-    println!(
-        "Loading OpenAddress addresses from {} SQLite databases",
-        params.openaddress_db.len()
-    );
+    for path in params.osm {
+        println!("Read raw OSM from path: {:?}", &path);
+        // TODO: filter
+        importer_osm::import_addresses(path, &mut deduplication.get_db_inserter(osm_ranking)?);
+    }
+
+    // -- Read database from OpenAddress
+
+    let openaddress_filter = |_addr: &Address| true;
+    let openaddress_ranking = |addr: &Address| {
+        PRIORITY_OPENADDRESS
+            + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
+    };
 
     for path in params.openaddress_db {
         load_from_sqlite(
             &mut deduplication,
             path,
-            |_| true,
-            |addr| {
-                PRIORITY_OPENADDRESS
-                    + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
-            },
+            openaddress_filter.clone(),
+            openaddress_ranking.clone(),
         )
-        .expect("failed to load addresses from database");
+        .expect("failed to load OpenAddress from database");
+    }
+
+    for path in params.openaddress {
+        println!("Read raw OpenAddress from path: {:?}", &path);
+        importer_openaddress::import_addresses(
+            &path,
+            &mut deduplication.get_db_inserter(openaddress_ranking)?,
+        );
     }
 
     // --- Apply deduplication

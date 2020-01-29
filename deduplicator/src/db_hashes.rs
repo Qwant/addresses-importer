@@ -92,6 +92,14 @@ impl DbHashes {
         self.count_table_entries(TABLE_TO_DELETE)
     }
 
+    pub fn count_cities(&self) rusqlite::Result<isize> {
+        self.get_conn()?.query_row(
+            &format!("SELECT COUNT(*) FROM {};", table),
+            NO_PARAMS,
+            |row: &rusqlite::Row| row.get(0),
+        )
+    }
+
     pub fn get_inserter<'c, 't>(
         tran: &'t mut Transaction<'c>,
     ) -> rusqlite::Result<Inserter<'c, 't>> {

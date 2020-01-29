@@ -7,7 +7,7 @@ use crate::dedupe::Dedupe;
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rusqlite::{Connection, Statement, NO_PARAMS};
-use tools::Address;
+use tools::{Address, CompatibleDB};
 
 pub fn postal_repr(address: &Address) -> Vec<rpostal::Address> {
     [
@@ -73,6 +73,7 @@ where
     )?)
     .expect("failed to count number of addresses");
 
+    // Query list of addresses
     let mut stmt = iter_addresses_stmt(&input_conn, "addresses")?;
     let addresses = iter_addresses_from_stmt(&mut stmt)?
         .progress()
@@ -84,5 +85,12 @@ where
         })
         .filter(filter);
 
-    deduplication.load_addresses(addresses, ranking)
+    // Insert addresses
+    let mut inserter = deduplication.get_db_inserter(ranking)?;
+
+    for address in addresses {
+        inserter.insert(address);
+    }
+
+    Ok(())
 }
