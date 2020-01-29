@@ -1,4 +1,5 @@
 use std::env;
+use tools::{CompatibleDB, DB};
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -7,7 +8,8 @@ fn main() {
         return;
     }
 
-    let db = openaddresses::import_addresses("addresses.db", &args[1], true);
+    let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+    openaddresses::import_addresses(&args[1], &mut db);
 
     println!(
         "Got {} addresses in {} cities (and {} errors)",
