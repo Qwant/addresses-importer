@@ -284,6 +284,7 @@ dependencies = [
  "geos",
  "osmpbfreader",
  "rusqlite",
+ "tools",
 ]
 
 [[package]]
@@ -456,6 +457,13 @@ dependencies = [
  "libc",
  "redox_syscall",
  "winapi",
+]
+
+[[package]]
+name = "tools"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
 ]
 
 [[package]]
