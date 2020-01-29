@@ -20,7 +20,7 @@ pub struct DB {
 }
 
 pub trait CompatibleDB {
-    type DB;
+    type DB: CompatibleDB;
 
     fn new(db_file: &str, db_buffer_size: usize, remove_db_data: bool) -> Result<Self::DB, String>;
     fn flush(&mut self);
