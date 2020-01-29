@@ -190,18 +190,16 @@ impl Dedupe {
                             .unwrap_or_else(|| pack_1.id.cmp(&pack_2.id))
                     });
 
-                    for j in 0..pack.len() {
+                    for j in 1..pack.len() {
                         for i in 0..j {
                             if is_duplicate(&POSTAL_CLASSIFIER, &pack[i].address, &pack[j].address)
                             {
                                 del_sender.send(pack[i].id).expect(
-                                    "failed sending id to delet: channel may have closed to early",
+                                    "failed sending id to delete: channel may have closed to early",
                                 );
                             }
                         }
                     }
-
-                    del_sender.send(0).unwrap();
                 }
             });
         }
@@ -222,9 +220,12 @@ impl Dedupe {
                 DbHashes::get_inserter(&mut tran_insert).expect("failed to init inserter");
 
             for id in del_receiver {
-                if let Err(e) = inserter.insert_to_delete(id) {
-                    eprintln!("failed to insert id to delete in the database: {}", e)
-                };
+                match inserter.insert_to_delete(id) {
+                    Err(err) if !is_constraint_violation_error(&err) => {
+                        eprintln!("failed to insert id to delete in the database: {}", err)
+                    }
+                    _ => (),
+                }
             }
         });
 
@@ -249,6 +250,7 @@ impl Dedupe {
                         Some(std::mem::replace(pack, vec![item]))
                     } else {
                         pack.clear();
+                        pack.push(item);
                         None
                     }
                 })
@@ -318,6 +320,18 @@ fn field_compare<T>(
     }
 }
 
+fn opt_field_compare<T>(
+    field1: &Option<T>,
+    field2: &Option<T>,
+    compare: impl Fn(&T, &T) -> bool,
+) -> bool {
+    match (field1.as_ref(), field2.as_ref()) {
+        (None, None) => true,
+        (Some(field1), Some(field2)) => compare(field1, field2),
+        _ => false,
+    }
+}
+
 pub fn is_duplicate(
     _rpostal_classifier: &rpostal::LanguageClassifier,
     addr_1: &Address,
@@ -331,7 +345,7 @@ pub fn is_duplicate(
         let point_2 = Point::new(addr_2.lon, addr_2.lat);
 
         (point_1.haversine_distance(&point_2) <= 100.)
-            && field_compare(&addr_1.number, &addr_2.number, |x, y| {
+            && opt_field_compare(&addr_1.number, &addr_2.number, |x, y| {
                 POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) >= ExactDuplicate
             })
             && field_compare(&addr_1.street, &addr_2.street, |x, y| {
@@ -340,7 +354,7 @@ pub fn is_duplicate(
     };
 
     let exact_duplicate = || {
-        field_compare(&addr_1.number, &addr_1.number, |x, y| {
+        opt_field_compare(&addr_1.number, &addr_1.number, |x, y| {
             POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) == ExactDuplicate
         }) // -
         && field_compare(&addr_1.street, &addr_2.street, |x, y| {

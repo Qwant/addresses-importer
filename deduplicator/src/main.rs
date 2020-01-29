@@ -14,6 +14,7 @@ extern crate structopt;
 mod address;
 mod db_hashes;
 mod dedupe;
+#[cfg(test)]
 mod tests;
 mod utils;
 

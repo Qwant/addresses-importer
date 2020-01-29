@@ -2,7 +2,7 @@ use std::ffi::CString;
 
 use rusqlite::Row;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Address {
     pub lat: f64,
     pub lon: f64,

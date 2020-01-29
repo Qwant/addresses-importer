@@ -31,6 +31,7 @@ impl DbHashes {
         conn.execute_batch(&format!(
             "
             CREATE TABLE IF NOT EXISTS {addresses} (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 lat         REAL NOT NULL,
                 lon         REAL NOT NULL,
                 number      TEXT,
@@ -40,8 +41,7 @@ impl DbHashes {
                 district    TEXT,
                 region      TEXT,
                 postcode    TEXT,
-                rank        REAL,
-                PRIMARY KEY (lat, lon, number, street, city)
+                rank        REAL
             );
 
             CREATE TABLE IF NOT EXISTS {hashes} (
@@ -105,7 +105,7 @@ impl DbHashes {
     pub fn apply_addresses_to_delete(&self) -> rusqlite::Result<usize> {
         self.get_conn()?.execute(
             &format!(
-                "DELETE FROM {} WHERE rowid IN (SELECT address_id FROM {});",
+                "DELETE FROM {} WHERE id IN (SELECT address_id FROM {});",
                 TABLE_ADDRESSES, TABLE_TO_DELETE
             ),
             NO_PARAMS,
@@ -234,7 +234,7 @@ impl<'c> SortedHashesIter<'c> {
         Ok(SortedHashesIter(conn.prepare(&format!(
             "
                 SELECT DISTINCT
-                    addr.rowid      AS id,
+                    addr.id         AS id,
                     addr.lat        AS lat,
                     addr.lon        AS lon,
                     addr.number     AS number,
@@ -248,7 +248,7 @@ impl<'c> SortedHashesIter<'c> {
                     hash.hash       AS hash
                 FROM  {hashes}   AS hash
                 JOIN {addresses} AS addr
-                    ON hash.address = addr.rowid
+                    ON hash.address = addr.id
                 ORDER BY hash.hash;
             ",
             addresses = TABLE_ADDRESSES,

@@ -6,7 +6,7 @@ use crate::dedupe::Dedupe;
 
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
-use rusqlite::{Connection, NO_PARAMS};
+use rusqlite::{Connection, Statement, NO_PARAMS};
 
 pub fn is_constraint_violation_error(err: &rusqlite::Error) -> bool {
     match err {
@@ -19,6 +19,19 @@ pub fn is_constraint_violation_error(err: &rusqlite::Error) -> bool {
         ) => true,
         _ => false,
     }
+}
+
+pub fn iter_addresses_stmt<'c>(
+    conn: &'c Connection,
+    table: &str,
+) -> rusqlite::Result<Statement<'c>> {
+    conn.prepare(&format!("select * from {}", table))
+}
+
+pub fn iter_addresses_from_stmt<'s>(
+    stmt: &'s mut Statement,
+) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<Address>> + 's> {
+    stmt.query_map(NO_PARAMS, Address::from_sqlite_row)
 }
 
 pub fn load_from_sqlite<F, R>(
@@ -39,9 +52,8 @@ where
     )?)
     .expect("failed to count number of addresses");
 
-    let mut stmt = input_conn.prepare("SELECT * FROM addresses")?;
-    let addresses = stmt
-        .query_map(NO_PARAMS, |row| Address::from_sqlite_row(&row))?
+    let mut stmt = iter_addresses_stmt(&input_conn, "addresses")?;
+    let addresses = iter_addresses_from_stmt(&mut stmt)?
         .progress()
         .with_iter_size(nb_addresses)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))
@@ -53,4 +65,3 @@ where
 
     deduplication.load_addresses(addresses, ranking)
 }
-
