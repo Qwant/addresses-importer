@@ -15,22 +15,6 @@ pub struct Address {
     pub postcode: Option<String>,
 }
 
-macro_rules! address_from_sqlite_row_with_prefix {
-    ($prefix:expr, $row:expr) => {
-        rusqlite::Result::Ok(Address {
-            lat: $row.get(concat!($prefix, "lat"))?,
-            lon: $row.get(concat!($prefix, "lon"))?,
-            number: $row.get(concat!($prefix, "number"))?,
-            street: $row.get(concat!($prefix, "street"))?,
-            unit: $row.get(concat!($prefix, "unit"))?,
-            city: $row.get(concat!($prefix, "city"))?,
-            district: $row.get(concat!($prefix, "district"))?,
-            region: $row.get(concat!($prefix, "region"))?,
-            postcode: $row.get(concat!($prefix, "postcode"))?,
-        })
-    };
-}
-
 impl Address {
     pub const NB_FIELDS: usize = 9;
 
@@ -65,7 +49,17 @@ impl Address {
     }
 
     pub fn from_sqlite_row(row: &Row) -> rusqlite::Result<Self> {
-        address_from_sqlite_row_with_prefix!("", row)
+        Ok(Address {
+            lat: row.get("lat")?,
+            lon: row.get("lon")?,
+            number: row.get("number")?,
+            street: row.get("street")?,
+            unit: row.get("unit")?,
+            city: row.get("city")?,
+            district: row.get("district")?,
+            region: row.get("region")?,
+            postcode: row.get("postcode")?,
+        })
     }
 }
 
