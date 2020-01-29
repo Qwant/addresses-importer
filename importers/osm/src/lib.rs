@@ -72,8 +72,10 @@ macro_rules! get_kind {
     ($obj:expr) => {
         if $obj.is_node() {
             &0
-        } else {
+        } else if $obj.is_way() {
             &1
+        } else {
+            &2
         }
     }
 }
@@ -82,6 +84,7 @@ struct DBNodes {
     conn: Connection,
     buffer: HashMap<OsmId, OsmObj>,
     buffer_size: usize,
+    db_file: String,
 }
 
 impl DBNodes {
@@ -105,6 +108,7 @@ impl DBNodes {
             conn,
             buffer: HashMap::with_capacity(buffer_size),
             buffer_size,
+            db_file: db_file.to_owned(),
         })
     }
 
@@ -172,8 +176,17 @@ impl DBNodes {
                     let nodes = w.nodes.iter().map(|n| self.get_from_id(&OsmId::Node(*n))).collect::<Vec<_>>();
                     f(obj, &nodes)
                 }
+                OsmObj::Relation(r) => {
+                    let nodes = r.refs.iter().filter_map(|r| {
+                        if r.member.is_node() {
+                            Some(self.get_from_id(&r.member))
+                        } else {
+                            None
+                        }
+                    }).collect::<Vec<_>>();
+                    f(obj, &nodes)
+                }
                 OsmObj::Node(_) => f(obj, &[]),
-                _ => unreachable!(),
             }
         }
         let mut stmt = self.conn.prepare("SELECT obj FROM nodes").expect("failed");
@@ -199,18 +212,17 @@ impl StoreObjs for DBNodes {
     fn insert(&mut self, id: OsmId, mut obj: OsmObj) {
         match obj {
             OsmObj::Node(ref mut n) => {
-                n.tags = (*n.tags).clone().into_iter().filter(|t| TAGS_TO_KEEP.iter().any(|x| *x == t.0.as_str())).collect();
+                n.tags.retain(|k, _| TAGS_TO_KEEP.iter().any(|x| *x == k.as_str()));
             }
             OsmObj::Way(ref mut w) => {
-                if w.nodes.is_empty() {
-                    return;
-                }
-                w.tags = (*w.tags).clone().into_iter().filter(|t| t.0 == "addr:housenumber" || t.0 == "addr:street").collect();
+                w.tags.retain(|k, _| k == "addr:housenumber" || k == "addr:street");
                 if w.tags.len() < 2 {
                     return;
                 }
             }
-            _ => return,
+            OsmObj::Relation(ref mut r) => {
+                r.tags.retain(|k, _| k == "name");
+            }
         }
         self.buffer.insert(id, obj);
         if self.buffer.len() >= self.buffer_size {
@@ -233,8 +245,8 @@ impl StoreObjs for DBNodes {
 
 impl Drop for DBNodes {
     fn drop(&mut self) {
-        let _ = self.connection.close(); // we ignore any potential error
-        let _ = fs::remove_file(self.db_file); // we ignore any potential error bis
+        self.conn.flush_prepared_statement_cache();
+        let _ = fs::remove_file(&self.db_file); // we ignore any potential error bis
     }
 }
 
@@ -452,10 +464,15 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
                 o.tags.iter().any(|x| x.0 == "addr:street")
             }
             OsmObj::Way(w) => {
+                !w.nodes.is_empty() &&
                 w.tags.iter().any(|x| x.0 == "addr:housenumber") &&
                 w.tags.iter().any(|x| x.0 == "addr:street")
             }
-            _ => false,
+            OsmObj::Relation(r) => {
+                r.refs.iter().filter(|r| r.member.is_node()).count() > 0 &&
+                r.tags.iter().any(|x| x.0 == "associatedStreet") &&
+                r.tags.iter().any(|x| x.0 == "name")
+            }
         }
     }, &mut db_nodes).expect("get_objs_and_deps_store failed");
 
@@ -497,7 +514,20 @@ pub fn import_addresses<P: AsRef<Path>>(
                     return;
                 }
             }
-            _ => unreachable!(),
+            OsmObj::Relation(r) => {
+                let addr_name = match r.tags.iter().find(|t| t.0 == "name").map(|t| t.1) {
+                    Some(addr) => addr,
+                    None => unreachable!(),
+                };
+                for node in nodes {
+                    if !node.tags.iter().any(|t| t.0 == "addr:housenumber") {
+                        return;
+                    }
+                    let mut addr = Address::new(&node.tags, node.lat(), node.lon());
+                    addr.street = Some(addr_name.clone());
+                    db.insert(addr);
+                }
+            }
         }
     });
     db
