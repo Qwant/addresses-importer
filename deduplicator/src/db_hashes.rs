@@ -216,17 +216,6 @@ pub struct HashIterItem {
     pub rank: f64,
 }
 
-impl Default for HashIterItem {
-    fn default() -> Self {
-        Self {
-            address: Address::default(),
-            hash: 0,
-            id: -1,
-            rank: 0.,
-        }
-    }
-}
-
 pub struct SortedHashesIter<'c>(Statement<'c>);
 
 impl<'c> SortedHashesIter<'c> {

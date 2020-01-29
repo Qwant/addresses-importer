@@ -1,6 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::iter;
 use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
@@ -8,6 +7,7 @@ use std::thread;
 use crossbeam_channel as channel;
 use geo::prelude::*;
 use geo::Point;
+use itertools::Itertools;
 use prog_rs::prelude::*;
 use rpostal;
 use rusqlite::DropBehavior;
@@ -240,22 +240,13 @@ impl Dedupe {
                 item.map_err(|err| eprintln!("failed retrieving hash: {}", err))
                     .ok()
             })
-            .chain(iter::once(HashIterItem::default()))
-            .scan(Vec::new(), |pack: &mut Vec<HashIterItem>, item| {
-                Some({
-                    if pack.first().map(|addr| addr.hash) == Some(item.hash) {
-                        pack.push(item);
-                        None
-                    } else if pack.len() > 1 {
-                        Some(std::mem::replace(pack, vec![item]))
-                    } else {
-                        pack.clear();
-                        pack.push(item);
-                        None
-                    }
-                })
-            })
-            .filter_map(|x| x);
+            .group_by(|addr| addr.hash);
+
+        // Remove packs of single elements
+        let conflicting_packs = conflicting_packs
+            .into_iter()
+            .map(|(_key, pack)| pack.collect::<Vec<_>>())
+            .filter(|pack| pack.len() >= 2);
 
         for pack in conflicting_packs {
             col_sender

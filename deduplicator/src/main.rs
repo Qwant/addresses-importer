@@ -1,6 +1,7 @@
 extern crate crossbeam_channel;
 extern crate geo;
 extern crate geo_geojson;
+extern crate itertools;
 extern crate num_cpus;
 #[macro_use]
 extern crate lazy_static;
