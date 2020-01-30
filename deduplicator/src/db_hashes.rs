@@ -121,6 +121,10 @@ impl DbHashes {
 
         Ok(())
     }
+
+    pub fn vacuum(&self) -> rusqlite::Result<()> {
+        self.get_conn()?.execute_batch("VACUUM;")
+    }
 }
 
 //  ___                     _

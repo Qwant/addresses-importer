@@ -61,6 +61,10 @@ struct Params {
     /// Path to output database.
     #[structopt(short, long, default_value = "addresses.db")]
     output: PathBuf,
+
+    /// Keep construction tables in the output database.
+    #[structopt(short, long)]
+    keep: bool,
 }
 
 fn main() -> rusqlite::Result<()> {
@@ -140,7 +144,7 @@ fn main() -> rusqlite::Result<()> {
     // --- Apply deduplication
 
     deduplication.compute_duplicates()?;
-    deduplication.apply_and_clean()?;
+    deduplication.apply_and_clean(params.keep)?;
 
     Ok(())
 }
