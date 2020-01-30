@@ -151,9 +151,9 @@ impl DBNodes {
             .expect("DBNodes::flush: transaction commit failed");
     }
 
-    fn get_from_id(&self, id: &OsmId) -> Cow<OsmObj> {
+    fn get_from_id(&self, id: &OsmId) -> Option<Cow<OsmObj>> {
         if let Some(obj) = self.buffer.get(id) {
-            return Cow::Borrowed(obj);
+            return Some(Cow::Borrowed(obj));
         }
         let mut stmt = self
             .conn
@@ -166,11 +166,11 @@ impl DBNodes {
             let obj: Vec<u8> = row
                 .get(0)
                 .expect("DBNodes::get_from_id: failed to get obj field");
-            return Cow::Owned(
+            return Some(Cow::Owned(
                 bincode::deserialize(&obj).expect("DBNodes::for_each: serde conversion failed"),
-            );
+            ));
         }
-        panic!("object missing!");
+        None
     }
 
     fn iter_objs<F: FnMut(&OsmObj, &[Cow<OsmObj>])>(&self, mut f: F) {
@@ -180,7 +180,7 @@ impl DBNodes {
                     let nodes = w
                         .nodes
                         .iter()
-                        .map(|n| self.get_from_id(&OsmId::Node(*n)))
+                        .filter_map(|n| self.get_from_id(&OsmId::Node(*n)))
                         .collect::<Vec<_>>();
                     f(obj, &nodes)
                 }
@@ -190,7 +190,7 @@ impl DBNodes {
                         .iter()
                         .filter_map(|r| {
                             if r.member.is_node() {
-                                Some(self.get_from_id(&r.member))
+                                self.get_from_id(&r.member)
                             } else {
                                 None
                             }
@@ -216,7 +216,7 @@ impl DBNodes {
                     let nodes = w
                         .nodes
                         .iter()
-                        .map(|n| self.get_from_id(&OsmId::Node(*n)))
+                        .filter_map(|n| self.get_from_id(&OsmId::Node(*n)))
                         .collect::<Vec<_>>();
                     f(&obj, &nodes)
                 }
@@ -227,7 +227,7 @@ impl DBNodes {
                         .iter()
                         .filter_map(|n| {
                             if n.member.is_node() {
-                                Some(self.get_from_id(&n.member))
+                                self.get_from_id(&n.member)
                             } else {
                                 None
                             }
