@@ -190,7 +190,14 @@ impl DBNodes {
                     f(&obj, &nodes)
                 }
                 OsmObj::Node(_) => f(&obj, &[]),
-                _ => unreachable!(),
+                OsmObj::Relation(ref r) => {
+                    let nodes = r.refs.iter().filter_map(|n| if n.member.is_node() {
+                        Some(self.get_from_id(&n.member))
+                    } else {
+                        None
+                    }).collect::<Vec<_>>();
+                    f(&obj, &nodes)
+                }
             }
         }
     }
