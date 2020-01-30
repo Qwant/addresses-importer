@@ -75,7 +75,7 @@ fn database_complete() -> rusqlite::Result<()> {
     let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"))?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
-    dedupe.apply_and_clean()?;
+    dedupe.apply_and_clean(false)?;
 
     // Read output database
     let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
@@ -97,7 +97,7 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
-    dedupe.apply_and_clean()?;
+    dedupe.apply_and_clean(false)?;
 
     // Read output database
     let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;

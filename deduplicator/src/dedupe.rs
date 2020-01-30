@@ -56,6 +56,7 @@ pub fn is_duplicate(addr_1: &Address, addr_2: &Address) -> bool {
     };
 
     let exact_duplicate = || {
+        // using "// -" to force rustfmt output
         opt_field_compare(&addr_1.number, &addr_1.number, |x, y| {
             POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) == ExactDuplicate
         }) // -

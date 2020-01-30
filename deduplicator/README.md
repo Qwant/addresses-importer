@@ -44,7 +44,7 @@ addresses(
 Duplicate criteria
 ------------------
 
-Two addresses are consider as duplicates if one of these two properties is
+Two addresses are considered as duplicates if one of these two properties is
 true:
 
  - The distance between the two addresses is less than 100 meters and according

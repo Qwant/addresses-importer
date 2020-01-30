@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
@@ -61,9 +62,9 @@ impl Deduplicator {
         //            |
         //            |  (address, rank, hashes)
         //            v
-        // [    del_receiver    ] writter thread
+        // [    del_receiver    ] writer thread
 
-        let nb_workers: usize = num_cpus::get() - 2;
+        let nb_workers = max(3, num_cpus::get()) - 2;
         let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNEL_SIZES);
         let (del_sender, del_receiver) = channel::bounded(CHANNEL_SIZES);
 
@@ -76,7 +77,11 @@ impl Deduplicator {
             thread::spawn(move || {
                 for mut pack in col_receiver {
                     if pack.len() > 1000 {
-                        eprintln!("Skipping pack of length {}", pack.len());
+                        // In practice this should not happen often, however in the case where this
+                        // issue is raised, it would be necessary to implement a specific way of
+                        // handling big packs (for example by computing more accurate hashes in
+                        // RAM).
+                        eprintln!("Performance danger: skipping pack of length {}", pack.len());
                         continue;
                     }
 
@@ -103,11 +108,11 @@ impl Deduplicator {
         drop(col_receiver);
         drop(del_sender);
 
-        // --- Init writter thread
+        // --- Init writer thread
 
         let mut conn_insert = self.db.get_conn()?;
 
-        let writter_thread = thread::spawn(move || {
+        let writer_thread = thread::spawn(move || {
             let mut tran_insert = conn_insert
                 .transaction()
                 .expect("failed to init transaction");
@@ -151,9 +156,7 @@ impl Deduplicator {
         }
 
         drop(col_sender);
-        writter_thread
-            .join()
-            .expect("failed joining writting thread");
+        writer_thread.join().expect("failed joining writing thread");
         Ok(())
     }
 
@@ -195,11 +198,11 @@ impl Deduplicator {
 //            |
 //            |  (address, rank, hashes)
 //            v
-// [     hash_receiver    ] writter thread
+// [     hash_receiver    ] writer thread
 
 pub struct DbInserter {
     addr_sender: channel::Sender<Address>,
-    writter_thread: thread::JoinHandle<()>,
+    writer_thread: thread::JoinHandle<()>,
 }
 
 impl DbInserter {
@@ -208,7 +211,7 @@ impl DbInserter {
         F: Fn(&Address) -> bool + Clone + Send + 'static,
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
     {
-        let nb_workers: usize = num_cpus::get() - 2;
+        let nb_workers = max(3, num_cpus::get()) - 2;
         let (addr_sender, addr_receiver) = channel::bounded(CHANNEL_SIZES);
         let (hash_sender, hash_receiver) = channel::bounded(CHANNEL_SIZES);
 
@@ -232,9 +235,9 @@ impl DbInserter {
             });
         }
 
-        // --- Init writter thread
+        // --- Init writer thread
 
-        let writter_thread = thread::spawn(move || {
+        let writer_thread = thread::spawn(move || {
             let mut tran = conn.transaction().expect("failed to init transaction");
             tran.set_drop_behavior(DropBehavior::Commit);
             let mut inserter = DbHashes::get_inserter(&mut tran).expect("failed to init inserter");
@@ -265,22 +268,20 @@ impl DbInserter {
 
         Self {
             addr_sender,
-            writter_thread,
+            writer_thread,
         }
     }
 }
 
 impl Drop for DbInserter {
     fn drop(&mut self) {
-        // Close sender channel, this will end writter threads
+        // Close sender channel, this will end writer threads
         let (closed_sender, _) = channel::unbounded();
         std::mem::replace(&mut self.addr_sender, closed_sender);
 
-        // Wait for writter thread to finish writting
-        let writter_thread = std::mem::replace(&mut self.writter_thread, thread::spawn(|| ()));
-        writter_thread
-            .join()
-            .expect("failed to join writter thread");
+        // Wait for writer thread to finish writing
+        let writer_thread = std::mem::replace(&mut self.writer_thread, thread::spawn(|| ()));
+        writer_thread.join().expect("failed to join writer thread");
     }
 }
 

@@ -19,7 +19,8 @@ impl Address {
     pub const NB_FIELDS: usize = 9;
 
     pub fn count_non_empty_fields(&self) -> usize {
-        2 + self.number.is_some() as usize
+        2 // lon & lat
+            + self.number.is_some() as usize
             + self.street.is_some() as usize
             + self.unit.is_some() as usize
             + self.city.is_some() as usize
