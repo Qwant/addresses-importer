@@ -106,6 +106,10 @@ impl DbHashes {
         Inserter::new(tran)
     }
 
+    pub fn get_addresses<'c>(conn: &'c Connection) -> rusqlite::Result<AddressesIter<'c>> {
+        AddressesIter::prepare(conn)
+    }
+
     pub fn get_sorted_hashes<'c>(conn: &'c Connection) -> rusqlite::Result<SortedHashesIter<'c>> {
         SortedHashesIter::prepare(conn)
     }
@@ -213,6 +217,31 @@ impl<'c, 't> Inserter<'c, 't> {
     }
 }
 
+//     _       _     _                               ___ _
+//    / \   __| | __| |_ __ ___  ___ ___  ___  ___  |_ _| |_ ___ _ __
+//   / _ \ / _` |/ _` | '__/ _ \/ __/ __|/ _ \/ __|  | || __/ _ \ '__|
+//  / ___ \ (_| | (_| | | |  __/\__ \__ \  __/\__ \  | || ||  __/ |
+// /_/   \_\__,_|\__,_|_|  \___||___/___/\___||___/ |___|\__\___|_|
+//
+
+pub struct AddressesIter<'c>(Statement<'c>);
+
+impl<'c> AddressesIter<'c> {
+    pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
+        Ok(Self(
+            conn.prepare(&format!("SELECT * FROM {};", TABLE_ADDRESSES))?,
+        ))
+    }
+
+    pub fn iter<'s>(
+        &'s mut self,
+    ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<Address>> + 's> {
+        let Self(stmt) = self;
+
+        Ok(stmt.query_map(NO_PARAMS, |row| row.try_into())?)
+    }
+}
+
 //   ____      _ _ _     _                   ___ _
 //  / ___|___ | | (_)___(_) ___  _ __  ___  |_ _| |_ ___ _ __
 // | |   / _ \| | | / __| |/ _ \| '_ \/ __|  | || __/ _ \ '__|
@@ -232,7 +261,7 @@ pub struct SortedHashesIter<'c>(Statement<'c>);
 
 impl<'c> SortedHashesIter<'c> {
     pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
-        Ok(SortedHashesIter(conn.prepare(&format!(
+        Ok(Self(conn.prepare(&format!(
             "
                 SELECT
                     addr.id         AS id,

@@ -1,4 +1,5 @@
 extern crate crossbeam_channel;
+extern crate csv;
 extern crate geo;
 extern crate geo_geojson;
 extern crate importer_bano;
@@ -62,13 +63,17 @@ struct Params {
     #[structopt(long)]
     osm_db: Vec<PathBuf>,
 
-    /// Path to output database.
+    /// Path for output database.
     #[structopt(short, long, default_value = "addresses.db")]
-    output: PathBuf,
+    output_db: PathBuf,
 
-    /// Keep construction tables in the output database.
+    /// Keep construction tables in the output database
     #[structopt(short, long)]
     keep: bool,
+
+    /// Output database as an OpenAddress-like CSV file
+    #[structopt(short, long)]
+    output_csv: Option<PathBuf>,
 }
 
 fn main() -> rusqlite::Result<()> {
@@ -100,7 +105,7 @@ fn main() -> rusqlite::Result<()> {
 
     // Load from all sources
 
-    let mut deduplication = Deduplicator::new(params.output)?;
+    let mut deduplication = Deduplicator::new(params.output_db)?;
 
     for (source, path) in db_sources {
         println!("Loading {:?} addresses from database {:?}", source, path);
@@ -131,6 +136,11 @@ fn main() -> rusqlite::Result<()> {
 
     deduplication.compute_duplicates()?;
     deduplication.apply_and_clean(params.keep)?;
+
+    if let Some(output_csv) = params.output_csv {
+        println!("Write output CSV");
+        deduplication.openaddress_dump(&output_csv)?;
+    }
 
     Ok(())
 }
