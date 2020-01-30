@@ -2,12 +2,35 @@ use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::path::PathBuf;
 
-use crate::dedupe::Dedupe;
+use crate::deduplicator::Deduplicator;
 
 use importer_tools::{Address, CompatibleDB};
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
-use rusqlite::{Connection, Statement, NO_PARAMS};
+use rusqlite::{Connection, NO_PARAMS};
+
+pub fn field_compare<T>(
+    field1: &Option<T>,
+    field2: &Option<T>,
+    compare: impl Fn(&T, &T) -> bool,
+) -> bool {
+    match (field1.as_ref(), field2.as_ref()) {
+        (Some(field1), Some(field2)) => compare(field1, field2),
+        _ => false,
+    }
+}
+
+pub fn opt_field_compare<T>(
+    field1: &Option<T>,
+    field2: &Option<T>,
+    compare: impl Fn(&T, &T) -> bool,
+) -> bool {
+    match (field1.as_ref(), field2.as_ref()) {
+        (None, None) => true,
+        (Some(field1), Some(field2)) => compare(field1, field2),
+        _ => false,
+    }
+}
 
 pub fn postal_repr(address: &Address) -> Vec<rpostal::Address> {
     [
@@ -42,21 +65,8 @@ pub fn is_constraint_violation_error(err: &rusqlite::Error) -> bool {
     }
 }
 
-pub fn iter_addresses_stmt<'c>(
-    conn: &'c Connection,
-    table: &str,
-) -> rusqlite::Result<Statement<'c>> {
-    conn.prepare(&format!("select * from {}", table))
-}
-
-pub fn iter_addresses_from_stmt<'s>(
-    stmt: &'s mut Statement,
-) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<Address>> + 's> {
-    stmt.query_map(NO_PARAMS, |row| row.try_into())
-}
-
 pub fn load_from_sqlite<F, R>(
-    deduplication: &mut Dedupe,
+    deduplication: &mut Deduplicator,
     path: PathBuf,
     filter: F,
     ranking: R,
@@ -74,8 +84,9 @@ where
     .expect("failed to count number of addresses");
 
     // Query list of addresses
-    let mut stmt = iter_addresses_stmt(&input_conn, "addresses")?;
-    let addresses = iter_addresses_from_stmt(&mut stmt)?
+    let mut stmt = input_conn.prepare("SELECT * FROM addresses;")?;
+    let addresses = stmt
+        .query_map(NO_PARAMS, |row| row.try_into())?
         .progress()
         .with_iter_size(nb_addresses)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))

@@ -19,8 +19,8 @@ mod tests;
 
 mod db_hashes;
 mod dedupe;
+mod deduplicator;
 mod utils;
-
 use std::path::PathBuf;
 
 use geo::algorithm::contains::Contains;
@@ -28,7 +28,7 @@ use geo::{MultiPolygon, Point};
 use importer_tools::Address;
 use structopt::StructOpt;
 
-use dedupe::Dedupe;
+use deduplicator::Deduplicator;
 use utils::load_from_sqlite;
 
 const FRANCE_GEOJSON: &str = include_str!("data/france.json");
@@ -84,7 +84,7 @@ fn main() -> rusqlite::Result<()> {
     // --- Read parameters
 
     let params = Params::from_args();
-    let mut deduplication = Dedupe::new(params.output)?;
+    let mut deduplication = Deduplicator::new(params.output)?;
 
     // --- Read database from OSM
 

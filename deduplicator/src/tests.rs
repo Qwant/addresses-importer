@@ -1,16 +1,16 @@
 extern crate tempdir;
 
+use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
 use importer_tools::Address;
 use importer_tools::CompatibleDB;
-use rusqlite::Connection;
+use rusqlite::{Connection, NO_PARAMS};
 use tempdir::TempDir;
 
-use crate::dedupe::Dedupe;
-use crate::utils::{iter_addresses_from_stmt, iter_addresses_stmt};
+use crate::deduplicator::Deduplicator;
 
 const DB_NO_DUPES: &str = "data/tests/no_dupes.sql";
 
@@ -27,10 +27,10 @@ fn load_dump(path: &PathBuf) -> rusqlite::Result<Connection> {
 }
 
 /// Load addresses from SQLite database
-fn load_addresses_from_db(conn: &Connection, table: &str) -> rusqlite::Result<Vec<Address>> {
+fn load_addresses_from_db(conn: &Connection) -> rusqlite::Result<Vec<Address>> {
     let mut res = Vec::new();
-    let mut stmt = iter_addresses_stmt(conn, table)?;
-    let iter = iter_addresses_from_stmt(&mut stmt)?;
+    let mut stmt = conn.prepare("SELECT * FROM addresses;")?;
+    let iter = stmt.query_map(NO_PARAMS, |row| row.try_into())?;
 
     for address in iter {
         res.push(address?);
@@ -41,7 +41,7 @@ fn load_addresses_from_db(conn: &Connection, table: &str) -> rusqlite::Result<Ve
 
 /// Insert addresses in the deduplicator
 fn insert_addresses(
-    dedupe: &mut Dedupe,
+    dedupe: &mut Deduplicator,
     addresses: impl IntoIterator<Item = Address>,
 ) -> rusqlite::Result<()> {
     let mut inserter = dedupe.get_db_inserter(|_| true, |_| 1.)?;
@@ -71,14 +71,14 @@ fn database_complete() -> rusqlite::Result<()> {
     let output_path = tmp_dir.path().join("addresses.db");
 
     // Read input database
-    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?, "addresses")?;
-    let mut dedupe = Dedupe::new(tmp_dir.path().join("addresses.db"))?;
+    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
+    let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"))?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
     dedupe.apply_and_clean()?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?, "addresses")?;
+    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
 
     // Compare results
     assert_same_addresses(input_addresses, output_addresses);
@@ -92,15 +92,15 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
     let output_path = tmp_dir.path().join("addresses.db");
 
     // Read input database
-    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?, "addresses")?;
-    let mut dedupe = Dedupe::new(tmp_dir.path().join("addresses.db"))?;
+    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
+    let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"))?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
     dedupe.apply_and_clean()?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?, "addresses")?;
+    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
 
     // Compare results
     assert_same_addresses(input_addresses, output_addresses);
