@@ -1,71 +1,77 @@
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::path::Path;
-use std::str::FromStr;
 
-use csv::{Reader, StringRecord};
+use csv::Reader;
 use tools::{Address, CompatibleDB};
 
-macro_rules! get_with_headers {
-    ($headers:expr, $key:expr, $records:expr) => {
-        if let Some(index) = $headers.0.get($key) {
-            $records.get(*index)
-        } else {
-            None
-        }
-    };
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub struct OpenAddress {
+    pub id: String,
+    pub street: String,
+    pub postcode: String,
+    pub district: String,
+    pub region: String,
+    pub city: String,
+    pub number: String,
+    pub unit: String,
+    pub lat: f64,
+    pub lon: f64,
 }
 
-macro_rules! get_f64 {
-    ($headers:expr, $key:expr, $records:expr) => {
-        match get_with_headers!($headers, $key, $records)
-            .and_then(|x| f64::from_str(x).ok()) {
-            Some(x) => x,
-            None => continue,
+impl Into<Address> for OpenAddress {
+    fn into(self) -> Address {
+        let filter_empty = |field: String| {
+            if field.is_empty() {
+                None
+            } else {
+                Some(field)
+            }
+        };
+
+        Address {
+            lat: self.lat,
+            lon: self.lon,
+            number: filter_empty(self.number),
+            street: filter_empty(self.street),
+            unit: filter_empty(self.unit),
+            city: filter_empty(self.city),
+            district: filter_empty(self.district),
+            region: filter_empty(self.region),
+            postcode: filter_empty(self.postcode),
         }
-    };
+    }
 }
 
-struct Headers(HashMap<String, usize>);
-
-impl Headers {
-    fn new(headers: &StringRecord) -> Headers {
-        let mut this = Headers(HashMap::with_capacity(11));
-
-        for (pos, header) in headers.iter().enumerate() {
-            this.0.insert(header.to_lowercase(), pos);
+impl From<Address> for OpenAddress {
+    fn from(address: Address) -> Self {
+        OpenAddress {
+            lat: address.lat,
+            lon: address.lon,
+            number: address.number.unwrap_or_default(),
+            street: address.street.unwrap_or_default(),
+            unit: address.unit.unwrap_or_default(),
+            city: address.city.unwrap_or_default(),
+            district: address.district.unwrap_or_default(),
+            region: address.region.unwrap_or_default(),
+            postcode: address.postcode.unwrap_or_default(),
+            id: String::new(),
         }
-        this
     }
 }
 
 fn read_csv<P: AsRef<Path>, T: CompatibleDB>(db: &mut T, file_path: P) {
-    let file = File::open(file_path).expect("cannot open file");
+    let file = File::open(&file_path).expect("cannot open file");
     let mut rdr = Reader::from_reader(file);
-    let headers = Headers::new(&rdr.headers().expect("no headers found"));
 
-    let mut records = rdr.into_records();
-    while let Some(x) = records.next() {
-        let x = match x {
-            Ok(x) => x,
-            Err(e) => {
-                eprintln!("invalid record found: {}", e);
-                continue;
-            }
-        };
-
-        db.insert(Address {
-            lat: get_f64!(headers, "lat", x),
-            lon: get_f64!(headers, "lon", x),
-            number: get_with_headers!(headers, "number", x).map(|x| x.to_owned()),
-            street: get_with_headers!(headers, "street", x).map(|x| x.to_owned()),
-            unit: get_with_headers!(headers, "unit", x).map(|x| x.to_owned()),
-            city: get_with_headers!(headers, "city", x).map(|x| x.to_owned()),
-            district: get_with_headers!(headers, "district", x).map(|x| x.to_owned()),
-            region: get_with_headers!(headers, "region", x).map(|x| x.to_owned()),
-            postcode: get_with_headers!(headers, "postcode", x).map(|x| x.to_owned()),
-        });
+    for address in rdr.deserialize::<OpenAddress>() {
+        match address {
+            Ok(address) => db.insert(address.into()),
+            Err(err) => eprintln!("invalid record found in {:?}: {}", file_path.as_ref(), err),
+        }
     }
 }
 

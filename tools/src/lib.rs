@@ -1,5 +1,3 @@
-pub mod openaddress;
-
 use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
 use std::convert::TryFrom;
 use std::fs;

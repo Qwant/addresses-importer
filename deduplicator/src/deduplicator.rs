@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use crossbeam_channel as channel;
-use importer_tools::openaddress::OpenAddress;
+use importer_openaddress::OpenAddress;
 use importer_tools::Address;
 use itertools::Itertools;
 use libflate::gzip::Encoder;
@@ -197,8 +197,7 @@ impl Deduplicator {
             for address in addresses.iter()? {
                 writer
                     .serialize(OpenAddress::from(address?))
-                    .map_err(|err| eprintln!("failed to write address: {}", err))
-                    .ok();
+                    .unwrap_or_else(|err| eprintln!("failed to write address: {}", err));
             }
         }
 
