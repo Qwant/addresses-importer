@@ -216,6 +216,9 @@ impl StoreObjs for DBNodes {
                 }
             }
             OsmObj::Relation(ref mut r) => {
+                if !r.tags.iter().any(|x| x.0 == "name") {
+                    return;
+                }
                 r.tags.retain(|k, _| k == "name");
             }
         }
