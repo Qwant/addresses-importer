@@ -77,7 +77,7 @@ fn main() -> rusqlite::Result<()> {
             .expect("France should be a MultiPolygon")
     };
 
-    let is_in_france = move |address: &Address| -> bool {
+    let _is_in_france = move |address: &Address| -> bool {
         france_shape.contains(&Point::new(address.lon, address.lat))
     };
 
@@ -88,7 +88,11 @@ fn main() -> rusqlite::Result<()> {
 
     // --- Read database from OSM
 
-    let osm_filter = move |addr: &Address| !is_in_france(addr);
+    // We may want to wait until we load addresses from BANO to filter out addresses
+    // from OSM and OpenAddress.
+    // let osm_filter = move |addr: &Address| !is_in_france(addr);
+
+    let osm_filter = move |_: &Address| true;
     let osm_ranking = |addr: &Address| {
         PRIORITY_OSM + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
     };
