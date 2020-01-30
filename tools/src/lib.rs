@@ -76,7 +76,7 @@ impl DB {
 pub trait CompatibleDB {
     fn flush(&mut self);
     fn insert(&mut self, addr: Address);
-    fn get_nb_cities(&self) -> i64;
+    fn get_nb_addrs_by_cities(&self) -> Vec<(String, i64)>;
     fn get_nb_addresses(&self) -> i64;
     fn get_nb_errors(&self) -> i64;
     fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)>;
@@ -173,15 +173,16 @@ impl CompatibleDB for DB {
         }
     }
 
-    fn get_nb_cities(&self) -> i64 {
+    fn get_nb_addrs_by_cities(&self) -> Vec<(String, i64)> {
         let mut stmt = self
             .conn
-            .prepare("SELECT COUNT(*) FROM addresses GROUP BY city")
+            .prepare("SELECT city, COUNT(*) FROM addresses GROUP BY city")
             .expect("failed to prepare");
-        let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
-            .expect("query_map failed");
-        iter.next().expect("no count???").expect("failed")
+        stmt
+            .query_map(NO_PARAMS, |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query_map failed")
+            .map(|x| x.expect("failed"))
+            .collect()
     }
 
     fn get_nb_addresses(&self) -> i64 {
