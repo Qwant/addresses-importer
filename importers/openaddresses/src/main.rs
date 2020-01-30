@@ -14,7 +14,7 @@ fn main() {
     println!(
         "Got {} addresses in {} cities (and {} errors)",
         db.get_nb_addresses(),
-        db.get_nb_addrs_by_cities().len(),
+        db.get_nb_cities(),
         db.get_nb_errors(),
     );
     println!("Errors by categories:");
