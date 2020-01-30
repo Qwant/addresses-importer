@@ -1,17 +1,32 @@
 extern crate tempdir;
 
-use std::cmp::Ordering;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
 use importer_tools::Address;
+use importer_tools::CompatibleDB;
 use rusqlite::Connection;
 use tempdir::TempDir;
 
 use crate::dedupe::Dedupe;
 use crate::utils::{iter_addresses_from_stmt, iter_addresses_stmt};
 
+const DB_NO_DUPES: &str = "data/tests/no_dupes.sql";
+
+/// Create an SQLite database from Sql dump
+fn load_dump(path: &PathBuf) -> rusqlite::Result<Connection> {
+    let mut sql_buff = String::new();
+    let mut file = File::open(path).expect("failed to load test database");
+    file.read_to_string(&mut sql_buff)
+        .expect("failed reading file");
+
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch(&sql_buff)?;
+    Ok(conn)
+}
+
+/// Load addresses from SQLite database
 fn load_addresses_from_db(conn: &Connection, table: &str) -> rusqlite::Result<Vec<Address>> {
     let mut res = Vec::new();
     let mut stmt = iter_addresses_stmt(conn, table)?;
@@ -24,15 +39,29 @@ fn load_addresses_from_db(conn: &Connection, table: &str) -> rusqlite::Result<Ve
     Ok(res)
 }
 
-fn load_db(path: &PathBuf) -> rusqlite::Result<Connection> {
-    let mut sql_buff = String::new();
-    let mut file = File::open(path).expect("failed to load test database");
-    file.read_to_string(&mut sql_buff)
-        .expect("failed reading file");
+/// Insert addresses in the deduplicator
+fn insert_addresses(
+    dedupe: &mut Dedupe,
+    addresses: impl IntoIterator<Item = Address>,
+) -> rusqlite::Result<()> {
+    let mut inserter = dedupe.get_db_inserter(|_| true, |_| 1.)?;
 
-    let conn = Connection::open_in_memory()?;
-    conn.execute_batch(&sql_buff)?;
-    Ok(conn)
+    for address in addresses {
+        inserter.insert(address);
+    }
+
+    Ok(())
+}
+
+fn assert_same_addresses(mut addresses_1: Vec<Address>, mut addresses_2: Vec<Address>) {
+    addresses_1.sort_by(|addr_1, addr_2| addr_1.partial_cmp(&addr_2).unwrap());
+    addresses_2.sort_by(|addr_1, addr_2| addr_1.partial_cmp(&addr_2).unwrap());
+
+    assert_eq!(addresses_1.len(), addresses_2.len());
+
+    for (addr_1, addr_2) in addresses_1.into_iter().zip(addresses_2) {
+        assert_eq!(addr_1, addr_2);
+    }
 }
 
 /// Check that no item is removed from a database without duplicates.
@@ -40,31 +69,19 @@ fn load_db(path: &PathBuf) -> rusqlite::Result<Connection> {
 fn database_complete() -> rusqlite::Result<()> {
     let tmp_dir = TempDir::new("output").unwrap();
     let output_path = tmp_dir.path().join("addresses.db");
-    let input_path = PathBuf::from("src/data/tests/db_1.sql");
 
     // Read input database
-    let mut input_addresses = load_addresses_from_db(&load_db(&input_path)?, "addresses")?;
+    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?, "addresses")?;
     let mut dedupe = Dedupe::new(tmp_dir.path().join("addresses.db"))?;
-    dedupe.load_addresses(input_addresses.clone().into_iter(), |_| 1.)?;
+    insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
     dedupe.apply_and_clean()?;
 
     // Read output database
-    let mut output_addresses =
-        load_addresses_from_db(&Connection::open(&output_path)?, "addresses")?;
+    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?, "addresses")?;
 
     // Compare results
-    input_addresses
-        .sort_by(|addr_1, addr_2| addr_1.partial_cmp(&addr_2).unwrap_or(Ordering::Equal));
-    output_addresses
-        .sort_by(|addr_1, addr_2| addr_1.partial_cmp(&addr_2).unwrap_or(Ordering::Equal));
-
-    assert_eq!(input_addresses.len(), output_addresses.len());
-    assert!(input_addresses
-        .into_iter()
-        .zip(output_addresses.into_iter())
-        .all(|(addr_1, addr_2)| addr_1 == addr_2));
-
+    assert_same_addresses(input_addresses, output_addresses);
     Ok(())
 }
 
@@ -73,31 +90,19 @@ fn database_complete() -> rusqlite::Result<()> {
 fn remove_exact_duplicates() -> rusqlite::Result<()> {
     let tmp_dir = TempDir::new("output").unwrap();
     let output_path = tmp_dir.path().join("addresses.db");
-    let input_path = PathBuf::from("src/data/tests/db_1.sql");
 
     // Read input database
-    let mut input_addresses = load_addresses_from_db(&load_db(&input_path)?, "addresses")?;
+    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?, "addresses")?;
     let mut dedupe = Dedupe::new(tmp_dir.path().join("addresses.db"))?;
-    dedupe.load_addresses(input_addresses.clone().into_iter(), |_| 1.)?;
-    dedupe.load_addresses(input_addresses.clone().into_iter(), |_| 1.)?;
+    insert_addresses(&mut dedupe, input_addresses.clone())?;
+    insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
     dedupe.apply_and_clean()?;
 
     // Read output database
-    let mut output_addresses =
-        load_addresses_from_db(&Connection::open(&output_path)?, "addresses")?;
+    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?, "addresses")?;
 
     // Compare results
-    input_addresses
-        .sort_by(|addr_1, addr_2| addr_1.partial_cmp(&addr_2).unwrap_or(Ordering::Equal));
-    output_addresses
-        .sort_by(|addr_1, addr_2| addr_1.partial_cmp(&addr_2).unwrap_or(Ordering::Equal));
-
-    assert_eq!(input_addresses.len(), output_addresses.len());
-    assert!(input_addresses
-        .into_iter()
-        .zip(output_addresses.into_iter())
-        .all(|(addr_1, addr_2)| addr_1 == addr_2));
-
+    assert_same_addresses(input_addresses, output_addresses);
     Ok(())
 }

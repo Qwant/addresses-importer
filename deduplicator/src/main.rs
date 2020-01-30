@@ -109,7 +109,7 @@ fn main() -> rusqlite::Result<()> {
 
     // -- Read database from OpenAddress
 
-    let openaddress_filter = |_addr: &Address| true;
+    let openaddress_filter = |_: &Address| true;
     let openaddress_ranking = |addr: &Address| {
         PRIORITY_OPENADDRESS
             + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
