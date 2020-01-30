@@ -1,8 +1,8 @@
 use std::convert::TryInto;
 use std::path::PathBuf;
 
+use importer_tools::Address;
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
-use tools::Address;
 
 const TABLE_ADDRESSES: &str = "addresses";
 const TABLE_HASHES: &str = "_addresses_hashes";
@@ -90,14 +90,6 @@ impl DbHashes {
 
     pub fn count_to_delete(&self) -> rusqlite::Result<isize> {
         self.count_table_entries(TABLE_TO_DELETE)
-    }
-
-    pub fn count_cities(&self) rusqlite::Result<isize> {
-        self.get_conn()?.query_row(
-            &format!("SELECT COUNT(*) FROM {};", table),
-            NO_PARAMS,
-            |row: &rusqlite::Row| row.get(0),
-        )
     }
 
     pub fn get_inserter<'c, 't>(

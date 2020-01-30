@@ -7,11 +7,11 @@ use std::thread;
 use crossbeam_channel as channel;
 use geo::prelude::*;
 use geo::Point;
+use importer_tools::Address;
 use itertools::Itertools;
 use prog_rs::prelude::*;
 use rpostal;
 use rusqlite::{Connection, DropBehavior};
-use tools::Address;
 
 use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::utils::{is_constraint_violation_error, postal_repr};
@@ -37,11 +37,12 @@ impl Dedupe {
         })
     }
 
-    pub fn get_db_inserter<R>(&mut self, ranking: R) -> rusqlite::Result<DbInserter>
+    pub fn get_db_inserter<F, R>(&mut self, filter: F, ranking: R) -> rusqlite::Result<DbInserter>
     where
+        F: Fn(&Address) -> bool + Clone + Send + 'static,
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
     {
-        Ok(DbInserter::new(self.db.get_conn()?, ranking))
+        Ok(DbInserter::new(self.db.get_conn()?, filter, ranking))
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
@@ -299,8 +300,9 @@ pub struct DbInserter {
 }
 
 impl DbInserter {
-    pub fn new<R>(mut conn: Connection, ranking: R) -> Self
+    pub fn new<F, R>(mut conn: Connection, filter: F, ranking: R) -> Self
     where
+        F: Fn(&Address) -> bool + Clone + Send + 'static,
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
     {
         let nb_workers: usize = num_cpus::get() - 2;
@@ -312,10 +314,11 @@ impl DbInserter {
         for _ in 0..nb_workers {
             let addr_receiver = addr_receiver.clone();
             let hash_sender = hash_sender.clone();
+            let filter = filter.clone();
             let ranking = ranking.clone();
 
             thread::spawn(move || {
-                for address in addr_receiver {
+                for address in addr_receiver.into_iter().filter(filter) {
                     let rank = ranking(&address);
                     let hashes: Vec<_> = hash_address(&POSTAL_CLASSIFIER, &address).collect();
 
@@ -378,7 +381,7 @@ impl Drop for DbInserter {
     }
 }
 
-impl tools::CompatibleDB for DbInserter {
+impl importer_tools::CompatibleDB for DbInserter {
     fn flush(&mut self) {}
 
     fn insert(&mut self, addr: Address) {
@@ -387,11 +390,13 @@ impl tools::CompatibleDB for DbInserter {
             .expect("failed sending address: channel may have closed too early");
     }
 
-    fn get_nb_cities(&self) -> i64 {
-        0
+    fn get_nb_addrs_by_cities(&self) -> Vec<(String, i64)> {
+        // TODO
+        Vec::new()
     }
 
     fn get_nb_addresses(&self) -> i64 {
+        // TODO
         0
     }
 

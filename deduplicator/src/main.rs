@@ -1,9 +1,9 @@
 extern crate crossbeam_channel;
 extern crate geo;
 extern crate geo_geojson;
+extern crate importer_tools;
 extern crate itertools;
 extern crate num_cpus;
-extern crate tools;
 #[macro_use]
 extern crate lazy_static;
 extern crate importer_openaddress;
@@ -25,8 +25,8 @@ use std::path::PathBuf;
 
 use geo::algorithm::contains::Contains;
 use geo::{MultiPolygon, Point};
+use importer_tools::Address;
 use structopt::StructOpt;
-use tools::Address;
 
 use dedupe::Dedupe;
 use utils::load_from_sqlite;
@@ -88,26 +88,23 @@ fn main() -> rusqlite::Result<()> {
 
     // --- Read database from OSM
 
-    let osm_filter = |addr: &Address| !is_in_france(addr);
+    let osm_filter = move |addr: &Address| !is_in_france(addr);
     let osm_ranking = |addr: &Address| {
         PRIORITY_OSM + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
     };
 
     for path in params.osm_db {
         println!("Read OSM from database: {:?}", &path);
-        load_from_sqlite(
-            &mut deduplication,
-            path,
-            osm_filter.clone(),
-            osm_ranking.clone(),
-        )
-        .expect("failed to load OSM from database");
+        load_from_sqlite(&mut deduplication, path, osm_filter.clone(), osm_ranking)
+            .expect("failed to load OSM from database");
     }
 
     for path in params.osm {
         println!("Read raw OSM from path: {:?}", &path);
-        // TODO: filter
-        importer_osm::import_addresses(path, &mut deduplication.get_db_inserter(osm_ranking)?);
+        importer_osm::import_addresses(
+            path,
+            &mut deduplication.get_db_inserter(osm_filter.clone(), osm_ranking)?,
+        );
     }
 
     // -- Read database from OpenAddress
@@ -122,8 +119,8 @@ fn main() -> rusqlite::Result<()> {
         load_from_sqlite(
             &mut deduplication,
             path,
-            openaddress_filter.clone(),
-            openaddress_ranking.clone(),
+            openaddress_filter,
+            openaddress_ranking,
         )
         .expect("failed to load OpenAddress from database");
     }
@@ -132,7 +129,7 @@ fn main() -> rusqlite::Result<()> {
         println!("Read raw OpenAddress from path: {:?}", &path);
         importer_openaddress::import_addresses(
             &path,
-            &mut deduplication.get_db_inserter(openaddress_ranking)?,
+            &mut deduplication.get_db_inserter(openaddress_filter, openaddress_ranking)?,
         );
     }
 

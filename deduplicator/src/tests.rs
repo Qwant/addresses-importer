@@ -5,9 +5,9 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
+use importer_tools::Address;
 use rusqlite::Connection;
 use tempdir::TempDir;
-use tools::Address;
 
 use crate::dedupe::Dedupe;
 use crate::utils::{iter_addresses_from_stmt, iter_addresses_stmt};

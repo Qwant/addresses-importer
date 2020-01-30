@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use crate::dedupe::Dedupe;
 
+use importer_tools::{Address, CompatibleDB};
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rusqlite::{Connection, Statement, NO_PARAMS};
-use tools::{Address, CompatibleDB};
 
 pub fn postal_repr(address: &Address) -> Vec<rpostal::Address> {
     [
@@ -62,7 +62,7 @@ pub fn load_from_sqlite<F, R>(
     ranking: R,
 ) -> rusqlite::Result<()>
 where
-    F: Fn(&Address) -> bool,
+    F: Fn(&Address) -> bool + Clone + Send + 'static,
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
     let input_conn = Connection::open(&path)?;
@@ -82,11 +82,10 @@ where
         .filter_map(|addr| {
             addr.map_err(|e| eprintln!("failed to read address from DB: {}", e))
                 .ok()
-        })
-        .filter(filter);
+        });
 
     // Insert addresses
-    let mut inserter = deduplication.get_db_inserter(ranking)?;
+    let mut inserter = deduplication.get_db_inserter(filter, ranking)?;
 
     for address in addresses {
         inserter.insert(address);
