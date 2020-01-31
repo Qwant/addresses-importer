@@ -42,7 +42,7 @@ pub fn postal_repr(address: &Address) -> Vec<rpostal::Address> {
         ("country_region", &address.region),
         ("postcode", &address.postcode),
     ]
-    .into_iter()
+    .iter()
     .filter_map(|(key, val)| {
         val.as_ref().map(|val| rpostal::Address {
             label: CString::new(key.as_bytes()).unwrap(),

@@ -103,7 +103,7 @@ fn main() -> rusqlite::Result<()> {
 
     for path in params.osm_db {
         println!("Read OSM from database: {:?}", &path);
-        load_from_sqlite(&mut deduplication, path, osm_filter.clone(), osm_ranking)
+        load_from_sqlite(&mut deduplication, path, osm_filter, osm_ranking)
             .expect("failed to load OSM from database");
     }
 

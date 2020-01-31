@@ -72,7 +72,7 @@ impl DbHashes {
         ))
     }
 
-    fn count_table_entries(&self, table: &str) -> rusqlite::Result<isize> {
+    fn count_table_entries(&self, table: &str) -> rusqlite::Result<i64> {
         self.get_conn()?.query_row(
             &format!("SELECT COUNT(*) FROM {};", table),
             NO_PARAMS,
@@ -80,16 +80,29 @@ impl DbHashes {
         )
     }
 
-    pub fn count_addresses(&self) -> rusqlite::Result<isize> {
+    pub fn count_addresses(&self) -> rusqlite::Result<i64> {
         self.count_table_entries(TABLE_ADDRESSES)
     }
 
-    pub fn count_hashes(&self) -> rusqlite::Result<isize> {
+    pub fn count_hashes(&self) -> rusqlite::Result<i64> {
         self.count_table_entries(TABLE_HASHES)
     }
 
-    pub fn count_to_delete(&self) -> rusqlite::Result<isize> {
+    pub fn count_to_delete(&self) -> rusqlite::Result<i64> {
         self.count_table_entries(TABLE_TO_DELETE)
+    }
+
+    pub fn count_addresses_per_city(&self) -> rusqlite::Result<Vec<(String, i64)>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare("SELECT city, COUNT(*) FROM addresses GROUP BY city")?;
+        let addresses_per_city = stmt.query_map(NO_PARAMS, |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let mut res = Vec::new();
+
+        for row in addresses_per_city {
+            res.push(row?);
+        }
+
+        Ok(res)
     }
 
     pub fn get_inserter<'c, 't>(
@@ -115,7 +128,7 @@ impl DbHashes {
     pub fn cleanup_database(&self) -> rusqlite::Result<()> {
         let conn = self.get_conn()?;
 
-        for db in [TABLE_HASHES, TABLE_TO_DELETE].into_iter() {
+        for db in [TABLE_HASHES, TABLE_TO_DELETE].iter() {
             conn.execute_batch(&format!("DROP TABLE {};", db))?;
         }
 

@@ -7,7 +7,7 @@ use crossbeam_channel as channel;
 use importer_tools::Address;
 use itertools::Itertools;
 use prog_rs::prelude::*;
-use rusqlite::{Connection, DropBehavior};
+use rusqlite::DropBehavior;
 
 use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::dedupe::{hash_address, is_duplicate};
@@ -31,7 +31,7 @@ impl Deduplicator {
         F: Fn(&Address) -> bool + Clone + Send + 'static,
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
     {
-        Ok(DbInserter::new(self.db.get_conn()?, filter, ranking))
+        Ok(DbInserter::new(&self.db, filter, ranking)?)
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
@@ -200,13 +200,14 @@ impl Deduplicator {
 //            v
 // [     hash_receiver    ] writer thread
 
-pub struct DbInserter {
+pub struct DbInserter<'db> {
+    db: &'db DbHashes,
     addr_sender: channel::Sender<Address>,
     writer_thread: thread::JoinHandle<()>,
 }
 
-impl DbInserter {
-    pub fn new<F, R>(mut conn: Connection, filter: F, ranking: R) -> Self
+impl<'db> DbInserter<'db> {
+    pub fn new<F, R>(db: &'db DbHashes, filter: F, ranking: R) -> rusqlite::Result<Self>
     where
         F: Fn(&Address) -> bool + Clone + Send + 'static,
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
@@ -237,6 +238,7 @@ impl DbInserter {
 
         // --- Init writer thread
 
+        let mut conn = db.get_conn()?;
         let writer_thread = thread::spawn(move || {
             let mut tran = conn.transaction().expect("failed to init transaction");
             tran.set_drop_behavior(DropBehavior::Commit);
@@ -266,14 +268,15 @@ impl DbInserter {
             }
         });
 
-        Self {
+        Ok(Self {
+            db,
             addr_sender,
             writer_thread,
-        }
+        })
     }
 }
 
-impl Drop for DbInserter {
+impl<'db> Drop for DbInserter<'db> {
     fn drop(&mut self) {
         // Close sender channel, this will end writer threads
         let (closed_sender, _) = channel::unbounded();
@@ -285,7 +288,7 @@ impl Drop for DbInserter {
     }
 }
 
-impl importer_tools::CompatibleDB for DbInserter {
+impl<'db> importer_tools::CompatibleDB for DbInserter<'db> {
     fn flush(&mut self) {}
 
     fn insert(&mut self, addr: Address) {
@@ -295,13 +298,15 @@ impl importer_tools::CompatibleDB for DbInserter {
     }
 
     fn get_nb_addrs_by_cities(&self) -> Vec<(String, i64)> {
-        // TODO
-        Vec::new()
+        self.db
+            .count_addresses_per_city()
+            .expect("failed counting addresses per city")
     }
 
     fn get_nb_addresses(&self) -> i64 {
-        // TODO
-        0
+        self.db
+            .count_addresses()
+            .expect("failed counting addresses")
     }
 
     fn get_nb_errors(&self) -> i64 {
