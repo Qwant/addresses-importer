@@ -34,7 +34,7 @@ impl DbHashes {
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 lat         REAL NOT NULL,
                 lon         REAL NOT NULL,
-                number      TEXT,
+                number      TEXT NOT NULL,
                 street      TEXT NOT NULL,
                 unit        TEXT,
                 city        TEXT,

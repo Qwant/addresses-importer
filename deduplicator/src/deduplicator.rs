@@ -13,7 +13,7 @@ use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::dedupe::{hash_address, is_duplicate};
 use crate::utils::is_constraint_violation_error;
 
-const CHANNEL_SIZES: usize = 1000;
+const CHANNEL_SIZES: usize = 100000;
 
 pub struct Deduplicator {
     db: DbHashes,
@@ -76,7 +76,7 @@ impl Deduplicator {
 
             thread::spawn(move || {
                 for mut pack in col_receiver {
-                    if pack.len() > 1000 {
+                    if pack.len() > 5000 {
                         // In practice this should not happen often, however in the case where this
                         // issue is raised, it would be necessary to implement a specific way of
                         // handling big packs (for example by computing more accurate hashes in
@@ -85,18 +85,19 @@ impl Deduplicator {
                         continue;
                     }
 
-                    pack.sort_by(|pack_1, pack_2| {
-                        (pack_1.rank, pack_1.id)
-                            .partial_cmp(&(pack_2.rank, pack_2.id))
-                            .unwrap_or_else(|| pack_1.id.cmp(&pack_2.id))
+                    pack.sort_by(|item_1, item_2| {
+                        (item_1.rank, item_1.id)
+                            .partial_cmp(&(item_2.rank, item_2.id))
+                            .unwrap_or_else(|| item_1.id.cmp(&item_2.id))
                     });
 
-                    for j in 1..pack.len() {
-                        for i in 0..j {
+                    for i in 0..pack.len() {
+                        for j in i + 1..pack.len() {
                             if is_duplicate(&pack[i].address, &pack[j].address) {
                                 del_sender.send(pack[i].id).expect(
                                     "failed sending id to delete: channel may have closed to early",
                                 );
+                                break;
                             }
                         }
                     }
@@ -119,8 +120,8 @@ impl Deduplicator {
             tran_insert.set_drop_behavior(DropBehavior::Commit);
             let mut inserter =
                 DbHashes::get_inserter(&mut tran_insert).expect("failed to init inserter");
-
-            for id in del_receiver {
+            let to_delete: std::collections::HashSet<_> = del_receiver.iter().collect();
+            for id in to_delete {
                 match inserter.insert_to_delete(id) {
                     Err(err) if !is_constraint_violation_error(&err) => {
                         eprintln!("failed to insert id to delete in the database: {}", err)
@@ -292,6 +293,16 @@ impl<'db> importer_tools::CompatibleDB for DbInserter<'db> {
     fn flush(&mut self) {}
 
     fn insert(&mut self, addr: Address) {
+        if (&addr)
+            .number
+            .as_ref()
+            .map(|num| num == "S/N")
+            .unwrap_or(true)
+        {
+            // house number is not specified
+            return;
+        }
+
         self.addr_sender
             .send(addr)
             .expect("failed sending address: channel may have closed too early");
