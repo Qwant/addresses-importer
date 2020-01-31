@@ -308,10 +308,8 @@ impl<'db> importer_tools::CompatibleDB for DbInserter<'db> {
             .expect("failed sending address: channel may have closed too early");
     }
 
-    fn get_nb_addrs_by_cities(&self) -> Vec<(String, i64)> {
-        self.db
-            .count_addresses_per_city()
-            .expect("failed counting addresses per city")
+    fn get_nb_cities(&self) -> i64 {
+        self.db.count_cities().expect("failed counting cities")
     }
 
     fn get_nb_addresses(&self) -> i64 {
