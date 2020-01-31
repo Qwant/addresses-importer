@@ -67,7 +67,7 @@ impl DbHashes {
 
     pub fn create_hashes_index(&self) -> rusqlite::Result<()> {
         self.get_conn()?.execute_batch(&format!(
-            "CREATE INDEX IF NOT EXISTS {hashes}_index_ ON {hashes} (hash);",
+            "CREATE INDEX IF NOT EXISTS {hashes}_index ON {hashes} (hash);",
             hashes = TABLE_HASHES
         ))
     }
