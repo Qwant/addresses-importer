@@ -8,6 +8,7 @@ edition = "2018"
 crossbeam-channel = "0.4"
 geo = "0.12"
 geo-geojson = "0.1"
+importer_bano = { path = "../importers/bano", package = "bano" }
 importer_openaddress = { path = "../importers/openaddresses", package = "openaddresses" }
 importer_osm = { path = "../importers/osm", package = "osm-addresses" }
 importer_tools = { path = "../tools", package = "tools" }

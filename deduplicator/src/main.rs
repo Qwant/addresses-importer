@@ -1,14 +1,15 @@
 extern crate crossbeam_channel;
 extern crate geo;
 extern crate geo_geojson;
-extern crate importer_tools;
-extern crate itertools;
-extern crate num_cpus;
-#[macro_use]
-extern crate lazy_static;
+extern crate importer_bano;
 extern crate importer_openaddress;
 extern crate importer_osm;
+extern crate importer_tools;
+extern crate itertools;
+#[macro_use]
+extern crate lazy_static;
 extern crate libsqlite3_sys;
+extern crate num_cpus;
 extern crate prog_rs;
 extern crate rpostal;
 extern crate rusqlite;
@@ -20,21 +21,16 @@ mod tests;
 mod db_hashes;
 mod dedupe;
 mod deduplicator;
+mod sources;
 mod utils;
 use std::path::PathBuf;
 
-use geo::algorithm::contains::Contains;
-use geo::{MultiPolygon, Point};
 use importer_tools::Address;
 use structopt::StructOpt;
 
 use deduplicator::Deduplicator;
+use sources::Source;
 use utils::load_from_sqlite;
-
-const FRANCE_GEOJSON: &str = include_str!("data/france.json");
-
-const PRIORITY_OSM: f64 = 2.;
-const PRIORITY_OPENADDRESS: f64 = 1.;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -42,6 +38,10 @@ const PRIORITY_OPENADDRESS: f64 = 1.;
     about = "Deduplicate addresses from several sources."
 )]
 struct Params {
+    /// Path to data from bano
+    #[structopt(long)]
+    bano: Vec<PathBuf>,
+
     /// Path to data from OpenAddress
     #[structopt(long)]
     openaddress: Vec<PathBuf>,
@@ -49,6 +49,10 @@ struct Params {
     /// Path to data from OSM
     #[structopt(long)]
     osm: Vec<PathBuf>,
+
+    /// Path to data from Bano as an SQLite database
+    #[structopt(long)]
+    bano_db: Vec<PathBuf>,
 
     /// Path to data from OpenAddress as an SQLite database
     #[structopt(long)]
@@ -68,77 +72,59 @@ struct Params {
 }
 
 fn main() -> rusqlite::Result<()> {
-    // --- Load France filter
-
-    let france_shape: MultiPolygon<_> = {
-        let collection =
-            geo_geojson::from_str(FRANCE_GEOJSON).expect("failed to parse shape for France");
-        collection
-            .into_iter()
-            .next()
-            .expect("found an empty collection for France")
-            .into_multi_polygon()
-            .expect("France should be a MultiPolygon")
-    };
-
-    let _is_in_france = move |address: &Address| -> bool {
-        france_shape.contains(&Point::new(address.lon, address.lat))
-    };
-
     // --- Read parameters
 
     let params = Params::from_args();
+
+    let db_sources = None
+        .into_iter()
+        .chain(params.bano_db.into_iter().map(|s| (Source::Bano, s)))
+        .chain(params.osm_db.into_iter().map(|s| (Source::Osm, s)))
+        .chain(
+            params
+                .openaddress_db
+                .into_iter()
+                .map(|s| (Source::OpenAddress, s)),
+        );
+
+    let raw_sources = None
+        .into_iter()
+        .chain(params.bano.into_iter().map(|s| (Source::Bano, s)))
+        .chain(params.osm.into_iter().map(|s| (Source::Osm, s)))
+        .chain(
+            params
+                .openaddress
+                .into_iter()
+                .map(|s| (Source::OpenAddress, s)),
+        );
+
+    // Load from all sources
+
     let mut deduplication = Deduplicator::new(params.output)?;
 
-    // --- Read database from OSM
+    for (source, path) in db_sources {
+        println!("Loading {:?} addresses from database {:?}", source, path);
 
-    // We may want to wait until we load addresses from BANO to filter out addresses
-    // from OSM and OpenAddress.
-    // let osm_filter = move |addr: &Address| !is_in_france(addr);
-
-    let osm_filter = move |_: &Address| true;
-    let osm_ranking = |addr: &Address| {
-        PRIORITY_OSM + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
-    };
-
-    for path in params.osm_db {
-        println!("Read OSM from database: {:?}", &path);
-        load_from_sqlite(&mut deduplication, path, osm_filter, osm_ranking)
-            .expect("failed to load OSM from database");
-    }
-
-    for path in params.osm {
-        println!("Read raw OSM from path: {:?}", &path);
-        importer_osm::import_addresses(
-            path,
-            &mut deduplication.get_db_inserter(osm_filter.clone(), osm_ranking)?,
-        );
-    }
-
-    // -- Read database from OpenAddress
-
-    let openaddress_filter = |_: &Address| true;
-    let openaddress_ranking = |addr: &Address| {
-        PRIORITY_OPENADDRESS
-            + addr.count_non_empty_fields() as f64 / (1. + Address::NB_FIELDS as f64)
-    };
-
-    for path in params.openaddress_db {
         load_from_sqlite(
             &mut deduplication,
             path,
-            openaddress_filter,
-            openaddress_ranking,
-        )
-        .expect("failed to load OpenAddress from database");
+            move |addr| source.filter(&addr),
+            move |addr| source.ranking(&addr),
+        )?;
     }
 
-    for path in params.openaddress {
-        println!("Read raw OpenAddress from path: {:?}", &path);
-        importer_openaddress::import_addresses(
-            &path,
-            &mut deduplication.get_db_inserter(openaddress_filter, openaddress_ranking)?,
-        );
+    for (source, path) in raw_sources {
+        println!("Loading {:?} addresses from path {:?}", source, path);
+
+        let filter = move |addr: &Address| source.filter(&addr);
+        let ranking = move |addr: &Address| source.ranking(&addr);
+        let import_method = match source {
+            Source::Osm => importer_osm::import_addresses,
+            Source::OpenAddress => importer_openaddress::import_addresses,
+            Source::Bano => importer_bano::import_addresses,
+        };
+
+        import_method(&path, &mut deduplication.get_db_inserter(filter, ranking)?);
     }
 
     // --- Apply deduplication
