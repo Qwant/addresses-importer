@@ -13,7 +13,7 @@ use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::dedupe::{hash_address, is_duplicate};
 use crate::utils::is_constraint_violation_error;
 
-const CHANNEL_SIZES: usize = 100000;
+const CHANNEL_SIZES: usize = 100_000;
 
 pub struct Deduplicator {
     db: DbHashes,
@@ -293,12 +293,7 @@ impl<'db> importer_tools::CompatibleDB for DbInserter<'db> {
     fn flush(&mut self) {}
 
     fn insert(&mut self, addr: Address) {
-        if (&addr)
-            .number
-            .as_ref()
-            .map(|num| num == "S/N")
-            .unwrap_or(true)
-        {
+        if addr.number.as_ref().map(|num| num == "S/N").unwrap_or(true) {
             // house number is not specified
             return;
         }
