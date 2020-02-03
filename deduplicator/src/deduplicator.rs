@@ -85,20 +85,30 @@ impl Deduplicator {
                         continue;
                     }
 
-                    pack.sort_by(|item_1, item_2| {
+                    // Place items we want to keep the most (ie. with greater rank) at the begining
+                    // of the array.
+                    pack.sort_unstable_by(|item_1, item_2| {
                         (item_1.rank, item_1.id)
                             .partial_cmp(&(item_2.rank, item_2.id))
                             .unwrap_or_else(|| item_1.id.cmp(&item_2.id))
+                            .reverse()
                     });
 
-                    for i in 0..pack.len() {
-                        for j in i + 1..pack.len() {
-                            if is_duplicate(&pack[i].address, &pack[j].address) {
-                                del_sender.send(pack[i].id).expect(
-                                    "failed sending id to delete: channel may have closed to early",
-                                );
-                                break;
-                            }
+                    // Keep track of addresses that will not be removed, each address will only be
+                    // compared with "first" element of other equivalence classes.
+                    let mut kept_items: Vec<_> = pack.first().into_iter().collect();
+
+                    for item in &pack[1..] {
+                        let item_is_duplicate = kept_items
+                            .iter()
+                            .any(|kept| is_duplicate(&item.address, &kept.address));
+
+                        if item_is_duplicate {
+                            del_sender.send(item.id).expect(
+                                "failed sending id to delete: channel may have closed to early",
+                            );
+                        } else {
+                            kept_items.push(item);
                         }
                     }
                 }
