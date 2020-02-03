@@ -1,0 +1,25 @@
+[package]
+name = "deduplicator"
+version = "0.1.0"
+authors = ["Rémi Dupré <r.dupre@qwant.com>"]
+edition = "2018"
+
+[dependencies]
+crossbeam-channel = "0.4"
+geo = "0.12"
+geo-geojson = "0.1"
+importer_bano = { path = "../importers/bano", package = "bano" }
+importer_openaddress = { path = "../importers/openaddresses", package = "openaddresses" }
+importer_osm = { path = "../importers/osm", package = "osm-addresses" }
+importer_tools = { path = "../tools", package = "tools" }
+itertools = "0.8.2"
+lazy_static = "1.4"
+libsqlite3-sys = "0.17"
+num_cpus = "1.12"
+rpostal = { git = "https://github.com/GuillaumeGomez/libpostal-rs.git" }
+prog_rs = "0.1"
+rusqlite = "0.21"
+structopt = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+tempdir = "0.3"
