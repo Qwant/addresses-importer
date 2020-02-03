@@ -5,7 +5,7 @@ use std::path::Path;
 
 use geos::Geometry;
 
-use osmpbfreader::objects::{OsmId, WayId, Tags};
+use osmpbfreader::objects::{OsmId, WayId, RelationId, Tags};
 use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
 
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
@@ -301,10 +301,10 @@ impl Drop for DBNodes {
 }
 
 // This functions gets all ways present in relations.
-fn get_ways<P: AsRef<Path>>(pbf_file: P) -> HashSet<WayId> {
+fn get_ways<P: AsRef<Path>>(pbf_file: P) -> (HashSet<WayId>, HashSet<RelationId>) {
     let mut db_nodes = DBNodes::new("tmp.db", 10000).expect("failed to create DBNodes");
     let mut ways = HashSet::with_capacity(10000);
-    let mut sub_relations = Vec::new();
+    let mut sub_relations = HashSet::with_capacity(100);
     let mut reader = OsmPbfReader::new(File::open(&pbf_file).expect(&format!(
         "Failed to open file `{}`",
         pbf_file.as_ref().display()
@@ -323,35 +323,23 @@ fn get_ways<P: AsRef<Path>>(pbf_file: P) -> HashSet<WayId> {
                                 ways.insert(id);
                             }
                             OsmId::Relation(id) => {
-                                sub_relations.push(id);
+                                sub_relations.insert(id);
                             }
                             _ => {}
                         }
                     }
                     true
                 } else {
-                    let mut position = None;
-                    for (pos, sub) in sub_relations.iter().enumerate() {
-                        if *sub == r.id {
-                            position = Some(pos);
-                            break;
-                        }
-                    }
-                    if let Some(position) = position {
-                        sub_relations.remove(position);
-                        true
-                    } else {
-                        false
-                    }
+                    sub_relations.contains(&r.id)
                 }
             }
             _ => false,
         }, &mut db_nodes).expect("get_ways: get_objs_and_deps_store failed");
-    ways
+    (ways, sub_relations)
 }
 
 // This functions gets everything else alongside the relations we already have that might be useful.
-fn get_nodes<P: AsRef<Path>>(pbf_file: P, ways: HashSet<WayId>) -> DBNodes {
+fn get_nodes<P: AsRef<Path>>(pbf_file: P, ways: HashSet<WayId>, relations: HashSet<RelationId>) -> DBNodes {
     let mut db_nodes = DBNodes::new("nodes.db", 1000).expect("failed to create DBNodes");
     let mut reader = OsmPbfReader::new(File::open(&pbf_file).expect(&format!(
         "Failed to open file `{}`",
@@ -371,11 +359,12 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P, ways: HashSet<WayId>) -> DBNodes {
                     || ways.contains(&w.id)
                 }
                 OsmObj::Relation(r) => {
-                    !r.refs.is_empty()
+                    (!r.refs.is_empty()
                         && r.tags
                             .iter()
                             .any(|x| x.0 == "type" && x.1 == "associatedStreet")
-                        && r.tags.iter().any(|x| x.0 == "name")
+                        && r.tags.iter().any(|x| x.0 == "name"))
+                    || relations.contains(&r.id)
                 }
             },
             &mut db_nodes,
@@ -394,10 +383,10 @@ fn get_time() -> String {
 
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(pbf_file: P, db: &mut T) {
     println!("[{}] Getting ways...", get_time());
-    let ways = get_ways(&pbf_file);
-    println!("[{}] Got {} ways", get_time(), ways.len());
+    let (ways, relations) = get_ways(&pbf_file);
+    println!("[{}] Got {} ways and {} relations", get_time(), ways.len(), relations.len());
     println!("[{}] Getting nodes...", get_time());
-    let db_nodes = get_nodes(pbf_file, ways);
+    let db_nodes = get_nodes(pbf_file, ways, relations);
     println!("[{}] Got {} nodes", get_time(), db_nodes.count());
     println!("[{}] Filling address DB...", get_time());
     db_nodes.iter_objs(|obj, sub_objs| {
