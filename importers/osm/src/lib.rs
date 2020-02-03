@@ -1,11 +1,11 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::path::Path;
 
 use geos::Geometry;
 
-use osmpbfreader::objects::{OsmId, Tags};
+use osmpbfreader::objects::{OsmId, WayId, Tags};
 use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
 
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
@@ -238,6 +238,17 @@ impl DBNodes {
             }
         }
     }
+
+    fn count(&self) -> i64 {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT COUNT(*) FROM nodes")
+            .expect("failed to prepare");
+        let mut iter = stmt
+            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
+            .expect("query_map failed");
+        iter.next().expect("no count???").expect("failed")
+    }
 }
 
 impl StoreObjs for DBNodes {
@@ -289,13 +300,63 @@ impl Drop for DBNodes {
     }
 }
 
-fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
+// This functions gets all ways present in relations.
+fn get_ways<P: AsRef<Path>>(pbf_file: P) -> HashSet<WayId> {
+    let mut db_nodes = DBNodes::new("tmp.db", 10000).expect("failed to create DBNodes");
+    let mut ways = HashSet::with_capacity(10000);
+    let mut sub_relations = Vec::new();
     let mut reader = OsmPbfReader::new(File::open(&pbf_file).expect(&format!(
         "Failed to open file `{}`",
         pbf_file.as_ref().display()
     )));
+    reader
+        .get_objs_and_deps_store(|obj| match obj {
+            OsmObj::Relation(r) => {
+                if !r.refs.iter().filter(|x| x.member.is_way() || x.member.is_relation()).count() > 0
+                    && r.tags
+                        .iter()
+                        .any(|x| x.0 == "type" && x.1 == "associatedStreet")
+                    && r.tags.iter().any(|x| x.0 == "name") {
+                    for entry in r.refs.iter() {
+                        match entry.member {
+                            OsmId::Way(id) => {
+                                ways.insert(id);
+                            }
+                            OsmId::Relation(id) => {
+                                sub_relations.push(id);
+                            }
+                            _ => {}
+                        }
+                    }
+                    true
+                } else {
+                    let mut position = None;
+                    for (pos, sub) in sub_relations.iter().enumerate() {
+                        if *sub == r.id {
+                            position = Some(pos);
+                            break;
+                        }
+                    }
+                    if let Some(position) = position {
+                        sub_relations.remove(position);
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+            _ => false,
+        }, &mut db_nodes).expect("get_ways: get_objs_and_deps_store failed");
+    ways
+}
 
+// This functions gets everything else alongside the relations we already have that might be useful.
+fn get_nodes<P: AsRef<Path>>(pbf_file: P, ways: HashSet<WayId>) -> DBNodes {
     let mut db_nodes = DBNodes::new("nodes.db", 1000).expect("failed to create DBNodes");
+    let mut reader = OsmPbfReader::new(File::open(&pbf_file).expect(&format!(
+        "Failed to open file `{}`",
+        pbf_file.as_ref().display()
+    )));
     reader
         .get_objs_and_deps_store(
             |obj| match obj {
@@ -304,12 +365,13 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
                         && o.tags.iter().any(|x| x.0 == "addr:street")
                 }
                 OsmObj::Way(w) => {
-                    !w.nodes.is_empty()
+                    (!w.nodes.is_empty()
                         && w.tags.iter().any(|x| x.0 == "addr:housenumber")
-                        && w.tags.iter().any(|x| x.0 == "addr:street")
+                        && w.tags.iter().any(|x| x.0 == "addr:street"))
+                    || ways.contains(&w.id)
                 }
                 OsmObj::Relation(r) => {
-                    r.refs.iter().filter(|r| r.member.is_node()).count() > 0
+                    !r.refs.is_empty()
                         && r.tags
                             .iter()
                             .any(|x| x.0 == "type" && x.1 == "associatedStreet")
@@ -318,15 +380,26 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
             },
             &mut db_nodes,
         )
-        .expect("get_objs_and_deps_store failed");
+        .expect("get_nodes: get_objs_and_deps_store failed");
 
     db_nodes.flush_buffer();
     println!("Got {} potential addresses!", db_nodes.get_nb_entries());
     db_nodes
 }
 
+fn get_time() -> String {
+    let now = time::Time::now();
+    format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second())
+}
+
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(pbf_file: P, db: &mut T) {
-    let db_nodes = get_nodes(pbf_file);
+    println!("[{}] Getting ways...", get_time());
+    let ways = get_ways(&pbf_file);
+    println!("[{}] Got {} ways", get_time(), ways.len());
+    println!("[{}] Getting nodes...", get_time());
+    let db_nodes = get_nodes(pbf_file, ways);
+    println!("[{}] Got {} nodes", get_time(), db_nodes.count());
+    println!("[{}] Filling address DB...", get_time());
     db_nodes.iter_objs(|obj, sub_objs| {
         match obj {
             OsmObj::Node(node) => db.insert(new_address(&node.tags, node.lat(), node.lon())),
@@ -381,4 +454,5 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(pbf_file: P, db: &mut T
             }
         }
     });
+    println!("[{}] Added {} addresses", get_time(), db.get_nb_addresses());
 }
