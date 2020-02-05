@@ -10,6 +10,7 @@ geos = "5.0"
 osmpbfreader = "0.13.4"
 rusqlite = "0.21"
 tools = { path = "../../tools" }
+time = { version = "0.2", features = ["std"] }
 
 [[bin]]
 name = "osm"
