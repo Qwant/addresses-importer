@@ -219,7 +219,9 @@ impl DBNodes {
                 f(self.get_way(Cow::Borrowed(obj)))
             } else if obj.is_relation() {
                 f(self.get_relation(Cow::Borrowed(obj)))
-            } else if obj.tags().iter().any(|t| t.0 == "addr:housenumber") && obj.tags().iter().any(|t| t.0 == "addr:street") {
+            } else if obj.tags().iter().any(|t| t.0 == "addr:housenumber")
+                && obj.tags().iter().any(|t| t.0 == "addr:street")
+            {
                 f(StoredObj::Node(Cow::Borrowed(obj)))
             }
         }
@@ -237,7 +239,9 @@ impl DBNodes {
                 f(self.get_way(Cow::Owned(obj)))
             } else if obj.is_relation() {
                 f(self.get_relation(Cow::Owned(obj)))
-            } else if obj.tags().iter().any(|t| t.0 == "addr:housenumber") && obj.tags().iter().any(|t| t.0 == "addr:street") {
+            } else if obj.tags().iter().any(|t| t.0 == "addr:housenumber")
+                && obj.tags().iter().any(|t| t.0 == "addr:street")
+            {
                 f(StoredObj::Node(Cow::Owned(obj)))
             }
         }
@@ -306,9 +310,7 @@ impl Drop for DBNodes {
     }
 }
 
-fn get_nodes<P: AsRef<Path>>(
-    pbf_file: P,
-) -> DBNodes {
+fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
     let mut db_nodes = DBNodes::new("nodes.db", 1000).expect("failed to create DBNodes");
     {
         let mut reader = OsmPbfReader::new(File::open(&pbf_file).expect(&format!(
@@ -324,8 +326,8 @@ fn get_nodes<P: AsRef<Path>>(
                     }
                     OsmObj::Way(w) => {
                         !w.nodes.is_empty()
-                           && w.tags.iter().any(|x| x.0 == "addr:housenumber")
-                           && w.tags.iter().any(|x| x.0 == "addr:street")
+                            && w.tags.iter().any(|x| x.0 == "addr:housenumber")
+                            && w.tags.iter().any(|x| x.0 == "addr:street")
                     }
                     OsmObj::Relation(r) => {
                         !r.refs.is_empty()
@@ -395,15 +397,19 @@ fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
             };
             for sub_obj in objs {
                 match sub_obj {
-                    StoredObj::Node(n) if n.tags().iter().any(|t| t.0 == "addr:housenumber") => match &*n {
-                        OsmObj::Node(n) => {
-                            let mut addr = new_address(&n.tags, n.lat(), n.lon());
-                            addr.street = Some(addr_name.clone());
-                            db.insert(addr);
+                    StoredObj::Node(n) if n.tags().iter().any(|t| t.0 == "addr:housenumber") => {
+                        match &*n {
+                            OsmObj::Node(n) => {
+                                let mut addr = new_address(&n.tags, n.lat(), n.lon());
+                                addr.street = Some(addr_name.clone());
+                                db.insert(addr);
+                            }
+                            _ => unreachable!(),
                         }
-                        _ => unreachable!(),
-                    },
-                    StoredObj::Way(w, nodes) if w.tags().iter().any(|t| t.0 == "addr:housenumber") => {
+                    }
+                    StoredObj::Way(w, nodes)
+                        if w.tags().iter().any(|t| t.0 == "addr:housenumber") =>
+                    {
                         if let Some((lat, lon)) = get_way_lat_lon(&nodes) {
                             let mut addr = new_address(&w.tags(), lat, lon);
                             addr.street = Some(addr_name.clone());
