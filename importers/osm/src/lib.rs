@@ -453,5 +453,6 @@ mod tests {
         assert_eq!(db.get_nb_addresses(), 361);
         let addr = db.get_address(2, "Place de la Forêt de Cruye");
         assert_eq!(addr.len(), 1);
+        let _ = fs::remove_file(db_file); // we ignore any potential error
     }
 }
