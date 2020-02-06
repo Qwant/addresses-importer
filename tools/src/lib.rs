@@ -115,6 +115,7 @@ pub trait CompatibleDB {
     fn get_nb_addresses(&self) -> i64;
     fn get_nb_errors(&self) -> i64;
     fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)>;
+    fn get_address(&self, housenumber: i32, street: &str) -> Vec<Address>;
 }
 
 impl CompatibleDB for DB {
@@ -227,7 +228,8 @@ impl CompatibleDB for DB {
         let mut iter = stmt
             .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
             .expect("query_map failed");
-        iter.next().expect("no count???").expect("failed")
+        let x: i64 = iter.next().expect("no count???").expect("failed");
+        x + self.buffer.len() as i64
     }
 
     fn get_nb_errors(&self) -> i64 {
@@ -250,6 +252,28 @@ impl CompatibleDB for DB {
             .expect("query_map failed")
             .map(|x| x.expect("failed"))
             .collect()
+    }
+
+    fn get_address(&self, housenumber: i32, street: &str) -> Vec<Address> {
+        let mut stmt = self.conn
+            .prepare("SELECT lat, lon, number, street, unit, city, district, region, postcode FROM addresses WHERE number=?1 AND street=?2")
+            .expect("failed to prepare statement");
+        stmt.query_map(&[&housenumber as &dyn ToSql, &street], |row| {
+            Ok(Address {
+                lat: row.get(0)?,
+                lon: row.get(1)?,
+                number: row.get(2)?,
+                street: row.get(3)?,
+                unit: row.get(4)?,
+                city: row.get(5)?,
+                district: row.get(6)?,
+                region: row.get(7)?,
+                postcode: row.get(8)?,
+            })
+        })
+        .expect("failed to insert into errors")
+        .map(|x| x.expect("failed"))
+        .collect()
     }
 }
 
