@@ -6,6 +6,27 @@ matrix:
       rust: nightly
     - os: linux
       rust: stable
+
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+    packages:
+      - gcc-4.8
+      - libsnappy-dev
+      - realpath
+      - pkg-config
+
+before_install:
+    - export CC="gcc-4.8"
+    - git clone https://github.com/openvenues/libpostal
+    - cd libpostal
+    - ./bootstrap.sh
+    - ./configure --datadir=$(pwd)/data
+    - sudo make install
+    - cd ..
+    - sudo ldconfig
+
 script:
   - rustc --version
   - cd deduplicator && cargo check
