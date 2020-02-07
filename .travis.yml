@@ -1,0 +1,25 @@
+dist: xenial
+language: rust
+matrix:
+  include:
+    - os: linux
+      rust: nightly
+    - os: linux
+      rust: stable
+script:
+  - rustc --version
+  - cd deduplicator && cargo check
+  - cargo test
+  - cd ..
+  - cd importers/osm && cargo check
+  - cargo test
+  - cd ../..
+  - cd importers/bano && cargo check
+  - cargo test
+  - cd ../..
+  - cd importers/openaddresses && cargo check
+  - cargo test
+  - cd ../..
+  - cd tools && cargo check
+  - cargo test
+  - cd ..
