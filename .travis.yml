@@ -1,0 +1,46 @@
+dist: xenial
+language: rust
+matrix:
+  include:
+    - os: linux
+      rust: nightly
+    - os: linux
+      rust: stable
+
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+    packages:
+      - gcc-4.8
+      - libsnappy-dev
+      - realpath
+      - pkg-config
+
+before_install:
+    - export CC="gcc-4.8"
+    - git clone https://github.com/openvenues/libpostal
+    - cd libpostal
+    - ./bootstrap.sh
+    - ./configure --datadir=$(pwd)/data
+    - sudo make install
+    - cd ..
+    - sudo ldconfig
+
+script:
+  - rustc --version
+  - cd deduplicator && cargo check
+  - cargo test
+  - cd ..
+  - cd importers/osm && cargo check
+  - cargo test
+  - cd ../..
+  - cd importers/bano && cargo check
+  - cargo test
+  - cd ../..
+  - cd importers/openaddresses && cargo check
+  - cargo test
+  - cd ../..
+  - cd tools && cargo check
+  - cargo test
+  - cd ..

@@ -320,4 +320,8 @@ impl<'db> importer_tools::CompatibleDB for DbInserter<'db> {
     fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)> {
         Vec::new()
     }
+
+    fn get_address(&self, _: i32, _: &str) -> Vec<Address> {
+        Vec::new()
+    }
 }
