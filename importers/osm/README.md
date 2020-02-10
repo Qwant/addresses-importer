@@ -11,7 +11,7 @@ It runs through all the elements and keeps them as follows:
  * If it's a `way`, it also needs to have both "addr:housenumber" and "addr:street" tags but it also needs to have at least one `node`, otherwise we can't determine its location (each node has an associated latitude/longitude, which isn't the case for a way).
  * If it's a `relation`, it needs a tag "name" and at least one element with the tag "type" with "associatedStreet" as value.
 
-Once we have gathered all the elements that might match our needs, we transform this data as addresses. Just like previously, the treatment different depending on the type of the element:
+Once we have gathered all the elements that might match our needs, we transform this data as addresses. Just like previously, the treatment differs depending on the type of the element:
 
  * If it's a `node`, we gather the tags and the position to generate the address.
  * If it's a `way`, we generate a polygon from its node and use its centroid's location as the way's location. Then it's the same as a `node`: we gather the tags and the position to generate the address.
