@@ -6,11 +6,11 @@ use std::thread;
 
 use crossbeam_channel as channel;
 use importer_openaddress::OpenAddress;
-use tools::Address;
 use itertools::Itertools;
 use libflate::gzip::Encoder;
 use prog_rs::prelude::*;
 use rusqlite::DropBehavior;
+use tools::Address;
 
 use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::dedupe::{hash_address, is_duplicate};
@@ -47,7 +47,8 @@ impl Deduplicator {
 
         tprint!(
             "Compute hash collisions ({} addresses, {} hashes)",
-            count_addresses_before, count_hashes
+            count_addresses_before,
+            count_hashes
         );
 
         let conn_get_collisions = self.db.get_conn()?;
@@ -267,7 +268,8 @@ impl<'db> DbInserter<'db> {
                     let hashes: Vec<_> = hash_address(&address).collect();
 
                     if hashes.is_empty() {
-                        teprint!("found an address that can't be hashed: {:?}", address);
+                        teprint!("ignoring an address that can't be hashed: {:?}", address);
+                        continue;
                     }
 
                     hash_sender

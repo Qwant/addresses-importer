@@ -5,14 +5,15 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
-use tools::Address;
-use tools::CompatibleDB;
 use rusqlite::{Connection, NO_PARAMS};
 use tempdir::TempDir;
+use tools::Address;
+use tools::CompatibleDB;
 
 use crate::deduplicator::Deduplicator;
 
 const DB_NO_DUPES: &str = "data/tests/no_dupes.sql";
+const DB_WITH_DUPES: &str = "data/tests/with_dupes.sql";
 
 /// Create an SQLite database from Sql dump
 fn load_dump(path: &PathBuf) -> rusqlite::Result<Connection> {
@@ -108,5 +109,27 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
 
     // Compare results
     assert_same_addresses(input_addresses, output_addresses);
+    Ok(())
+}
+
+/// Check that all non-trivial duplicates are removed.
+#[test]
+fn remove_close_duplicates() -> rusqlite::Result<()> {
+    let tmp_dir = TempDir::new("output").unwrap();
+    let output_path = tmp_dir.path().join("addresses.db");
+
+    // Read input database
+    let input_addresses = load_addresses_from_db(&load_dump(&DB_WITH_DUPES.into())?)?;
+    let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"), None)?;
+    insert_addresses(&mut dedupe, input_addresses)?;
+    dedupe.compute_duplicates()?;
+    dedupe.apply_and_clean(false)?;
+
+    // Read output database
+    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+    for addr in &output_addresses {
+        println!("{:?}", &addr);
+    }
+    assert_eq!(output_addresses.len(), 10);
     Ok(())
 }

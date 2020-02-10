@@ -65,7 +65,7 @@ struct Params {
     osm_db: Vec<PathBuf>,
 
     /// Path for output database.
-    #[structopt(short, long, default_value = "addresses.db")]
+    #[structopt(long, default_value = "addresses.db")]
     output_db: PathBuf,
 
     /// Keep construction tables in the output database
