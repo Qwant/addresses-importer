@@ -8,6 +8,13 @@ use rpostal;
 
 use crate::utils::{field_compare, opt_field_compare, postal_repr};
 
+/// 5 seems to be a nice value for our use of libpostal: two addresses will be a collision if there
+/// are distant of less than about 10km on the equator, and about 1km at a latitude of 80°.
+///
+/// Note that there is no city at less than 8° from a pole:
+/// https://en.wikipedia.org/wiki/Alert,_Nunavut).
+const GEOHASH_PRECISION: u32 = 5;
+
 lazy_static! {
     static ref POSTAL_CORE: rpostal::Core =
         rpostal::Core::setup().expect("failed to init libpostal core");
@@ -18,13 +25,18 @@ lazy_static! {
 
 pub fn hash_address(address: &Address) -> impl Iterator<Item = u64> {
     let options = rpostal::NearDupeHashOptions {
+        // Only keep local keys (number / street), the geohash will filter distant addresses.
+        address_only_keys: true,
         with_name: true,
         with_address: true,
-        with_city_or_equivalent: true,
+        with_city_or_equivalent: false,
+        with_postal_code: false,
+
+        with_latlon: true,
         longitude: address.lon,
         latitude: address.lat,
-        with_latlon: true,
-        address_only_keys: true,
+
+        geohash_precision: GEOHASH_PRECISION,
         ..POSTAL_CLASSIFIER.get_near_dupe_hash_default_options()
     };
 

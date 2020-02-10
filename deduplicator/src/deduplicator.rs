@@ -256,6 +256,10 @@ impl<'db> DbInserter<'db> {
                     let rank = ranking(&address);
                     let hashes: Vec<_> = hash_address(&address).collect();
 
+                    if hashes.is_empty() {
+                        eprintln!("found an address that can't be hashed: {:?}", address);
+                    }
+
                     hash_sender
                         .send((address, rank, hashes))
                         .expect("failed sending hashes: channel may have closed too early");
