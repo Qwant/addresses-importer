@@ -1,11 +1,14 @@
 use std::cmp::max;
+use std::fs::File;
 use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
 
 use crossbeam_channel as channel;
+use importer_openaddress::OpenAddress;
 use importer_tools::Address;
 use itertools::Itertools;
+use libflate::gzip::Encoder;
 use prog_rs::prelude::*;
 use rusqlite::DropBehavior;
 
@@ -176,6 +179,29 @@ impl Deduplicator {
             self.db.vacuum()?;
         }
 
+        Ok(())
+    }
+
+    pub fn openaddress_dump(&self, path: &PathBuf) -> rusqlite::Result<()> {
+        // Fetch addresses
+        let conn = self.db.get_conn()?;
+        let mut addresses = DbHashes::get_addresses(&conn)?;
+
+        // Init dump file
+        let file = File::create(path).expect("failed to open dump file");
+        let mut encoder = Encoder::new(file).expect("failed to init encoder");
+
+        {
+            let mut writer = csv::Writer::from_writer(&mut encoder);
+
+            for address in addresses.iter()? {
+                writer
+                    .serialize(OpenAddress::from(address?))
+                    .unwrap_or_else(|err| eprintln!("failed to write address: {}", err));
+            }
+        }
+
+        encoder.finish().as_result().expect("failed to end dump");
         Ok(())
     }
 }
