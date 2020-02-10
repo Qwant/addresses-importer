@@ -25,8 +25,11 @@ mod dedupe;
 mod deduplicator;
 mod sources;
 mod utils;
+
+use std::fs::File;
 use std::path::PathBuf;
 
+use libflate::gzip;
 use structopt::StructOpt;
 use tools::Address;
 
@@ -73,12 +76,16 @@ struct Params {
     keep: bool,
 
     /// Output database as an OpenAddress-like CSV file
-    #[structopt(short, long)]
+    #[structopt(long)]
     output_csv: Option<PathBuf>,
 
-    /// Number of pages to be used by SQLITE. One page is 4096 bytes. The default value is 10_000.
+    /// Output database as an OpenAddress-like gzip CSV file
     #[structopt(short, long)]
-    cache_size: Option<u32>,
+    output_compressed_csv: Option<PathBuf>,
+
+    /// Number of pages to be used by SQLite (one page is 4096 bytes)
+    #[structopt(short, long, default_value = "10000")]
+    cache_size: u32,
 }
 
 fn main() -> rusqlite::Result<()> {
@@ -110,7 +117,7 @@ fn main() -> rusqlite::Result<()> {
 
     // Load from all sources
 
-    let mut deduplication = Deduplicator::new(params.output_db, params.cache_size)?;
+    let mut deduplication = Deduplicator::new(params.output_db, Some(params.cache_size))?;
 
     for (source, path) in db_sources {
         tprint!("Loading {:?} addresses from database {:?}", source, path);
@@ -142,9 +149,20 @@ fn main() -> rusqlite::Result<()> {
     deduplication.compute_duplicates()?;
     deduplication.apply_and_clean(params.keep)?;
 
+    // --- Dump CSV
+
     if let Some(output_csv) = params.output_csv {
-        tprint!("Write output CSV");
-        deduplication.openaddresses_dump(&output_csv)?;
+        tprint!("Write CSV");
+        let file = File::create(output_csv).expect("failed to create dump file");
+        deduplication.openaddresses_dump(file)?;
+    }
+
+    if let Some(compressed_csv) = params.output_compressed_csv {
+        tprint!("Write compressed CSV");
+        let file = File::create(compressed_csv).expect("failed to create dump file");
+        let mut encoder = gzip::Encoder::new(file).expect("failed to init gzip encoder");
+        deduplication.openaddresses_dump(&mut encoder)?;
+        encoder.finish().as_result().expect("failed to end dump");
     }
 
     Ok(())
