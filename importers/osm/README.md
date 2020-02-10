@@ -5,21 +5,20 @@ file file from which you want to extract the addresses.
 
 ## How it works
 
-It runs through 2 passes:
+It runs through all the elements and keeps them as follows:
 
-The first pass collects all ways containing at least one node and the tags "addr:housenumber"
-and "addr:street" and all the nodes (but we remove all the tags that we have no interest in, so all
-those which don't start with "addr:") and store them inside a sqlite database (to prevent too high
-RAM usage).
+ * If it's a `node`, it needs to have both "addr:housenumber" and "addr:street" tags.
+ * If it's a `way`, it also needs to have both "addr:housenumber" and "addr:street" tags but it also needs to have at least one `node`, otherwise we can't determine its location (each node has an associated latitude/longitude, which isn't the case for a way).
+ * If it's a `relation`, it needs a tag "name" and at least one element with the tag "type" with "associatedStreet" as value.
 
-Why keeping all the nodes you might wonder? Because we might need them for a way. The ways don't
-have a position, so we generate a polygon using [geos](https://github.com/georust/geos/) and use
-its centroid as the way's position.
+Once we have gathered all the elements that might match our needs, we transform this data as addresses. Just like previously, the treatment different depending on the type of the element:
 
-Second pass: now that we have all these nodes and ways stored inside a database, we iterate through
-them. Small note on the nodes: even though we stored them previously without filtering, we do filter
-them on this pass for the simple reason that if they don't have a house number, it'll generate an
-SQL error which would be useless.
+ * If it's a `node`, we gather the tags and the position to generate the address.
+ * If it's a `way`, we generate a polygon from its node and use its centroid's location as the way's location. Then it's the same as a `node`: we gather the tags and the position to generate the address.
+ * If it's a `relation`, it gets a bit more tricky since it means we might have multiple addresses. So we iterate through the children:
+   * If the child is a `node` and it has a "addr:housenumber" tag, we generate a new address by using most of its tags except for the street name (which is the one from the `relation`).
+   * If the child is a `way` and it has a "addr:housenumber" tag, we use the same method as we described above for a `way`, except we replace the street name (if there is any) by the one in the parent `relation`.
+   * If the child is a `relation`, we currently ignore it.
 
 ## Running it
 
@@ -29,35 +28,7 @@ You can run it like this:
 $ cargo run --release -- [the PBF file]
 ```
 
-The generated database has two tables which look like this:
-
-```sql
-CREATE TABLE IF NOT EXISTS addresses(
-    lat REAL NOT NULL,
-    lon REAL NOT NULL,
-    number TEXT,
-    street TEXT NOT NULL,
-    unit TEXT,
-    city TEXT,
-    district TEXT,
-    region TEXT,
-    postcode TEXT,
-    PRIMARY KEY (lat, lon, number, street, city)
-);
-
-CREATE TABLE IF NOT EXISTS addresses_errors(
-    lat REAL,
-    lon REAL,
-    number TEXT,
-    street TEXT,
-    unit TEXT,
-    city TEXT,
-    district TEXT,
-    region TEXT,
-    postcode TEXT,
-    kind TEXT
-);
-```
+The generated database has two tables. Take a look at the `tools` folder's README to see what it looks like.
 
 ## Using it as a library
 
