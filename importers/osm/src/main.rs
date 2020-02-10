@@ -6,7 +6,7 @@ fn main() {
     if args.len() < 2 {
         eprintln!("Expected PBF file path");
     }
-    let mut db = DB::new("addressesdb", 1000, true).expect("Failed to create DB");
+    let mut db = DB::new("addresses.db", 1000, true).expect("Failed to create DB");
     osm::import_addresses(&args[1], &mut db);
     println!(
         "Got {} addresses in {} cities (and {} errors)",
