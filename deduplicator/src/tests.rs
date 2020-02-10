@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use importer_openaddress::OpenAddress;
 use importer_tools::Address;
 use importer_tools::CompatibleDB;
-use libflate::gzip::Decoder;
 use rusqlite::{Connection, NO_PARAMS};
 use tempdir::TempDir;
 
@@ -124,15 +123,17 @@ fn csv_is_complete() -> rusqlite::Result<()> {
     let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
     let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"))?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
-    dedupe.openaddress_dump(&output_csv_path)?;
+
+    // Dump CSV
+    let file = File::create(&output_csv_path).expect("failed to create dump file");
+    dedupe.openaddress_dump(file)?;
 
     // Read output database
     let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
 
     // Read output CSV
-    let mut csv_file = File::open(&output_csv_path).unwrap();
-    let decoder = Decoder::new(&mut csv_file).unwrap();
-    let mut reader = csv::Reader::from_reader(decoder);
+    let csv_file = File::open(&output_csv_path).unwrap();
+    let mut reader = csv::Reader::from_reader(csv_file);
     let csv_addresses = reader
         .deserialize()
         .map(|line| {

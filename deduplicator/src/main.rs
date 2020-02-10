@@ -24,9 +24,12 @@ mod dedupe;
 mod deduplicator;
 mod sources;
 mod utils;
+
+use std::fs::File;
 use std::path::PathBuf;
 
 use importer_tools::Address;
+use libflate::gzip;
 use structopt::StructOpt;
 
 use deduplicator::Deduplicator;
@@ -72,8 +75,12 @@ struct Params {
     keep: bool,
 
     /// Output database as an OpenAddress-like CSV file
-    #[structopt(short, long)]
+    #[structopt(long)]
     output_csv: Option<PathBuf>,
+
+    /// Output database as an OpenAddress-like gzip CSV file
+    #[structopt(short, long)]
+    output_compressed_csv: Option<PathBuf>,
 }
 
 fn main() -> rusqlite::Result<()> {
@@ -137,9 +144,20 @@ fn main() -> rusqlite::Result<()> {
     deduplication.compute_duplicates()?;
     deduplication.apply_and_clean(params.keep)?;
 
+    // --- Dump CSV
+
     if let Some(output_csv) = params.output_csv {
-        println!("Write output CSV");
-        deduplication.openaddress_dump(&output_csv)?;
+        println!("Write CSV");
+        let file = File::create(output_csv).expect("failed to create dump file");
+        deduplication.openaddress_dump(file)?;
+    }
+
+    if let Some(compressed_csv) = params.output_compressed_csv {
+        println!("Write compressed CSV");
+        let file = File::create(compressed_csv).expect("failed to create dump file");
+        let mut encoder = gzip::Encoder::new(file).expect("failed to init gzip encoder");
+        deduplication.openaddress_dump(&mut encoder)?;
+        encoder.finish().as_result().expect("failed to end dump");
     }
 
     Ok(())
