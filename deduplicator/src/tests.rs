@@ -5,8 +5,10 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
+use importer_openaddress::OpenAddress;
 use importer_tools::Address;
 use importer_tools::CompatibleDB;
+use libflate::gzip::Decoder;
 use rusqlite::{Connection, NO_PARAMS};
 use tempdir::TempDir;
 
@@ -108,5 +110,38 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
 
     // Compare results
     assert_same_addresses(input_addresses, output_addresses);
+    Ok(())
+}
+
+/// Check that no data is altered while writting into a CSV dump.
+#[test]
+fn csv_is_complete() -> rusqlite::Result<()> {
+    let tmp_dir = TempDir::new("output").unwrap();
+    let output_path = tmp_dir.path().join("addresses.db");
+    let output_csv_path = tmp_dir.path().join("addresses.csv.gz");
+
+    // Read input database
+    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
+    let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"))?;
+    insert_addresses(&mut dedupe, input_addresses.clone())?;
+    dedupe.openaddress_dump(&output_csv_path)?;
+
+    // Read output database
+    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+
+    // Read output CSV
+    let mut csv_file = File::open(&output_csv_path).unwrap();
+    let decoder = Decoder::new(&mut csv_file).unwrap();
+    let mut reader = csv::Reader::from_reader(decoder);
+    let csv_addresses = reader
+        .deserialize()
+        .map(|line| {
+            let open_address: OpenAddress = line.unwrap();
+            open_address.into()
+        })
+        .collect();
+
+    // Compare results
+    assert_same_addresses(output_addresses, csv_addresses);
     Ok(())
 }
