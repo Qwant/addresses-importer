@@ -4,36 +4,10 @@ The goal of this project is to aggregate multiple sources of addresses and then 
 
 The big part of this project being the deduplication process and cleaning the data.
 
-## Importers
+## Workflow
 
-Each importer generates an [sqlite](https://www.sqlite.org/index.html) `addresses.db` file with the following tables:
+It first loads addresses data using the importers. You might want to take a look in the `importers` folder if you want more information on a specific importer.
 
-```
-addresses(
-  lat REAL NOT NULL,
-  lon REAL NOT NULL,
-  number TEXT,
-  street TEXT NOT NULL,
-  unit TEXT,
-  city TEXT,
-  district TEXT,
-  region TEXT,
-  postcode TEXT,
-  PRIMARY KEY (lat, lon, number, street, city, place)
-)
+To make sure they generate the same kind of data, we wrote a trait called `CompatibleDB` which is available in `tools/src/lib.rs` alongside an `Address` type. Therefore, the importers are forced to all provide the same information in the same format. It's then up to the caller to implement them however they want.
 
-addresses_errors(
-  lat REAL,
-  lon REAL,
-  number TEXT,
-  street TEXT,
-  unit TEXT,
-  city TEXT,
-  district TEXT,
-  region TEXT,
-  postcode TEXT,
-  kind TEXT
-)
-```
-
-The `addresses_errors` table is only used as a way to improve the data gathering that'll be put in the first table.
+Once the imports are done, all the data is merged into one big file. However, a same address may have been imported several times from different sources and sometime several time in the same source. This is where the `[deduplicator](./deduplicator)` comes in. As usual, more information can be found in its README file.
