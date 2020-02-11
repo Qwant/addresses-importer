@@ -10,7 +10,7 @@ use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
 
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
 
-use tools::{Address, CompatibleDB, tprint, teprint};
+use tools::{teprint, tprint, Address, CompatibleDB};
 
 const TAGS_TO_KEEP: &[&str] = &[
     "addr:housenumber",
@@ -169,7 +169,7 @@ impl DBNodes {
         let mut iter = stmt
             .query(&[&id.inner_id() as &dyn ToSql, get_kind!(id)])
             .expect("DB::get_from_id: query_map failed");
-        while let Some(row) = iter.next().expect("DBNodes::get_from_id: next failed") {
+        if let Some(row) = iter.next().expect("DBNodes::get_from_id: next failed") {
             let obj: Vec<u8> = row
                 .get(0)
                 .expect("DBNodes::get_from_id: failed to get obj field");
@@ -313,10 +313,10 @@ impl Drop for DBNodes {
 fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
     let mut db_nodes = DBNodes::new("nodes.db", 1000).expect("failed to create DBNodes");
     {
-        let mut reader = OsmPbfReader::new(File::open(&pbf_file).expect(&format!(
-            "Failed to open file `{}`",
-            pbf_file.as_ref().display()
-        )));
+        let mut reader =
+            OsmPbfReader::new(File::open(&pbf_file).unwrap_or_else(|err| {
+                panic!("Failed to open file {:?}: {}", pbf_file.as_ref(), err)
+            }));
         reader
             .get_objs_and_deps_store(
                 |obj| match obj {
@@ -366,9 +366,8 @@ fn get_way_lat_lon(sub_objs: &[Cow<OsmObj>]) -> Option<(f64, f64)> {
             .join(",")
     );
     if let Ok(geom) = Geometry::new_from_wkt(&polygon).and_then(|g| g.get_centroid()) {
-        match (geom.get_x(), geom.get_y()) {
-            (Ok(lon), Ok(lat)) => return Some((lon, lat)),
-            _ => {}
+        if let (Ok(lon), Ok(lat)) = (geom.get_x(), geom.get_y()) {
+            return Some((lon, lat));
         };
     }
     None
