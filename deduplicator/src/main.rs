@@ -5,7 +5,8 @@ extern crate geo_geojson;
 extern crate importer_bano;
 extern crate importer_openaddress;
 extern crate importer_osm;
-extern crate importer_tools;
+#[macro_use]
+extern crate tools;
 extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
@@ -26,7 +27,7 @@ mod sources;
 mod utils;
 use std::path::PathBuf;
 
-use importer_tools::Address;
+use tools::Address;
 use structopt::StructOpt;
 
 use deduplicator::Deduplicator;
@@ -108,7 +109,7 @@ fn main() -> rusqlite::Result<()> {
     let mut deduplication = Deduplicator::new(params.output_db)?;
 
     for (source, path) in db_sources {
-        println!("Loading {:?} addresses from database {:?}", source, path);
+        tprint!("Loading {:?} addresses from database {:?}", source, path);
 
         load_from_sqlite(
             &mut deduplication,
@@ -119,7 +120,7 @@ fn main() -> rusqlite::Result<()> {
     }
 
     for (source, path) in raw_sources {
-        println!("Loading {:?} addresses from path {:?}", source, path);
+        tprint!("Loading {:?} addresses from path {:?}", source, path);
 
         let filter = move |addr: &Address| source.filter(&addr);
         let ranking = move |addr: &Address| source.ranking(&addr);
@@ -138,7 +139,7 @@ fn main() -> rusqlite::Result<()> {
     deduplication.apply_and_clean(params.keep)?;
 
     if let Some(output_csv) = params.output_csv {
-        println!("Write output CSV");
+        tprint!("Write output CSV");
         deduplication.openaddress_dump(&output_csv)?;
     }
 

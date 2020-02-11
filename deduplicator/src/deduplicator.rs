@@ -6,7 +6,7 @@ use std::thread;
 
 use crossbeam_channel as channel;
 use importer_openaddress::OpenAddress;
-use importer_tools::Address;
+use tools::Address;
 use itertools::Itertools;
 use libflate::gzip::Encoder;
 use prog_rs::prelude::*;
@@ -38,14 +38,14 @@ impl Deduplicator {
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
-        println!("Build index on hashes");
+        tprint!("Build index on hashes");
         self.db.create_hashes_index()?;
 
         // --- Query collisions from DB
         let count_addresses_before = self.db.count_addresses()?;
         let count_hashes = self.db.count_hashes()?;
 
-        println!(
+        tprint!(
             "Compute hash collisions ({} addresses, {} hashes)",
             count_addresses_before, count_hashes
         );
@@ -84,7 +84,7 @@ impl Deduplicator {
                         // issue is raised, it would be necessary to implement a specific way of
                         // handling big packs (for example by computing more accurate hashes in
                         // RAM).
-                        eprintln!("Performance danger: skipping pack of length {}", pack.len());
+                        teprint!("Performance danger: skipping pack of length {}", pack.len());
                         continue;
                     }
 
@@ -137,7 +137,7 @@ impl Deduplicator {
             for id in to_delete {
                 match inserter.insert_to_delete(id) {
                     Err(err) if !is_constraint_violation_error(&err) => {
-                        eprintln!("failed to insert id to delete in the database: {}", err)
+                        teprint!("failed to insert id to delete in the database: {}", err)
                     }
                     _ => (),
                 }
@@ -152,7 +152,7 @@ impl Deduplicator {
             .progress()
             .with_iter_size(count_hashes as usize)
             .filter_map(|item| {
-                item.map_err(|err| eprintln!("failed retrieving hash: {}", err))
+                item.map_err(|err| teprint!("failed retrieving hash: {}", err))
                     .ok()
             })
             .group_by(|addr| addr.hash);
@@ -175,17 +175,17 @@ impl Deduplicator {
     }
 
     pub fn apply_and_clean(&self, keep_construction_tables: bool) -> rusqlite::Result<()> {
-        println!(
+        tprint!(
             "Appling deletion ({} addresses)",
             self.db.count_to_delete()?
         );
         self.db.apply_addresses_to_delete()?;
 
         if !keep_construction_tables {
-            println!("Cleaning database");
+            tprint!("Cleaning database");
             self.db.cleanup_database()?;
 
-            println!("Vacuum database");
+            tprint!("Vacuum database");
             self.db.vacuum()?;
         }
 
@@ -207,7 +207,7 @@ impl Deduplicator {
             for address in addresses.iter()? {
                 writer
                     .serialize(OpenAddress::from(address?))
-                    .unwrap_or_else(|err| eprintln!("failed to write address: {}", err));
+                    .unwrap_or_else(|err| teprint!("failed to write address: {}", err));
             }
         }
 
@@ -267,7 +267,7 @@ impl<'db> DbInserter<'db> {
                     let hashes: Vec<_> = hash_address(&address).collect();
 
                     if hashes.is_empty() {
-                        eprintln!("found an address that can't be hashed: {:?}", address);
+                        teprint!("found an address that can't be hashed: {:?}", address);
                     }
 
                     hash_sender
@@ -295,14 +295,14 @@ impl<'db> DbInserter<'db> {
                                 .insert_hash(addr_id, hash as i64)
                                 .map_err(|err| {
                                     if !is_constraint_violation_error(&err) {
-                                        eprintln!("failed inserting hash: {}", err);
+                                        teprint!("failed inserting hash: {}", err);
                                     }
                                 })
                                 .ok();
                         }
                     }
                     Err(err) if !is_constraint_violation_error(&err) => {
-                        eprintln!("failed inserting address: {}", err);
+                        teprint!("failed inserting address: {}", err);
                     }
                     _ => (),
                 }
@@ -329,7 +329,7 @@ impl<'db> Drop for DbInserter<'db> {
     }
 }
 
-impl<'db> importer_tools::CompatibleDB for DbInserter<'db> {
+impl<'db> tools::CompatibleDB for DbInserter<'db> {
     fn flush(&mut self) {}
 
     fn insert(&mut self, addr: Address) {

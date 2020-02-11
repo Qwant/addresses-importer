@@ -2,6 +2,27 @@ use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
 use std::convert::TryFrom;
 use std::fs;
 
+pub fn get_time() -> String {
+    let now = time::Time::now();
+    format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second())
+}
+
+#[macro_export]
+macro_rules! tprint {
+    ($($arg:tt)*) => {{
+        use tools::get_time;
+        println!("[{}] {}", get_time(), format!($($arg)*));
+    }}
+}
+
+#[macro_export]
+macro_rules! teprint {
+    ($($arg:tt)*) => {{
+        use tools::get_time;
+        eprintln!("[{}] {}", get_time(), format!($($arg)*));
+    }}
+}
+
 #[derive(Clone, Debug, PartialOrd, PartialEq)]
 pub struct Address {
     pub lat: f64,

@@ -12,7 +12,7 @@ geo-geojson = "0.1"
 importer_bano = { path = "../importers/bano", package = "bano" }
 importer_openaddress = { path = "../importers/openaddresses", package = "openaddresses" }
 importer_osm = { path = "../importers/osm", package = "osm-addresses" }
-importer_tools = { path = "../tools", package = "tools" }
+tools = { path = "../tools" }
 itertools = "0.8.2"
 lazy_static = "1.4"
 libflate = "0.1"

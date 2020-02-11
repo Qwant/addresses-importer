@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use geo::prelude::*;
 use geo::Point;
-use importer_tools::Address;
+use tools::Address;
 use rpostal;
 
 use crate::utils::{field_compare, opt_field_compare, postal_repr};
