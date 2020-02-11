@@ -367,7 +367,7 @@ fn get_way_lat_lon(sub_objs: &[Cow<OsmObj>]) -> Option<(f64, f64)> {
     );
     if let Ok(geom) = Geometry::new_from_wkt(&polygon).and_then(|g| g.get_centroid()) {
         match (geom.get_x(), geom.get_y()) {
-            (Ok(lon), Ok(lat)) => return Some((lon, lat)),
+            (Ok(lon), Ok(lat)) => return Some((lat, lon)),
             _ => {}
         };
     }
