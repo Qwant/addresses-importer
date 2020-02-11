@@ -1,7 +1,7 @@
 use std::convert::TryInto;
 use std::path::PathBuf;
 
-use importer_tools::Address;
+use tools::Address;
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
 
 const TABLE_ADDRESSES: &str = "addresses";

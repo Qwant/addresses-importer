@@ -1,7 +1,7 @@
 use geo::algorithm::contains::Contains;
 use geo::{MultiPolygon, Point};
 
-use importer_tools::Address;
+use tools::Address;
 
 lazy_static! {
     static ref FRANCE_SHAPE: MultiPolygon<f64> = {

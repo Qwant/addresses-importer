@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::path::Path;
 
 use csv::Reader;
-use tools::{Address, CompatibleDB};
+use tools::{Address, CompatibleDB, teprint, tprint};
 
 use serde::{Deserialize, Serialize};
 
@@ -64,18 +64,21 @@ impl From<Address> for OpenAddress {
 }
 
 fn read_csv<P: AsRef<Path>, T: CompatibleDB>(db: &mut T, file_path: P) {
+    tprint!("Reading `{}`...", file_path.as_ref().display());
     let file = File::open(&file_path).expect("cannot open file");
     let mut rdr = Reader::from_reader(file);
 
     for address in rdr.deserialize::<OpenAddress>() {
         match address {
             Ok(address) => db.insert(address.into()),
-            Err(err) => eprintln!("invalid record found in {:?}: {}", file_path.as_ref(), err),
+            Err(err) => teprint!("invalid record found in {:?}: {}", file_path.as_ref(), err),
         }
     }
+    tprint!("Done reading!");
 }
 
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(path: P, db: &mut T) {
+    tprint!("Reading CSV files...");
     for entry in fs::read_dir(path).expect("folder not found") {
         if let Ok(entry) = entry {
             let path = entry.path();
@@ -86,4 +89,5 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(path: P, db: &mut T) {
             }
         }
     }
+    tprint!("Done!");
 }

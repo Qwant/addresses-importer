@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::deduplicator::Deduplicator;
 
-use importer_tools::{Address, CompatibleDB};
+use tools::{Address, CompatibleDB};
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rusqlite::{Connection, NO_PARAMS};
@@ -91,7 +91,7 @@ where
         .with_iter_size(nb_addresses)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))
         .filter_map(|addr| {
-            addr.map_err(|e| eprintln!("failed to read address from DB: {}", e))
+            addr.map_err(|e| teprint!("failed to read address from DB: {}", e))
                 .ok()
         });
 

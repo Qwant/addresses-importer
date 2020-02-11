@@ -1,5 +1,5 @@
 use std::env;
-use tools::{CompatibleDB, DB};
+use tools::{CompatibleDB, DB, tprint};
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -11,7 +11,7 @@ fn main() {
     let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
     bano::import_addresses(&args[1], &mut db);
 
-    println!(
+    tprint!(
         "Got {} addresses in {} cities (and {} errors)",
         db.get_nb_addresses(),
         db.get_nb_cities(),

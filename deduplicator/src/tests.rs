@@ -5,8 +5,8 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
-use importer_tools::Address;
-use importer_tools::CompatibleDB;
+use tools::Address;
+use tools::CompatibleDB;
 use rusqlite::{Connection, NO_PARAMS};
 use tempdir::TempDir;
 

@@ -10,7 +10,7 @@ use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
 
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
 
-use tools::{Address, CompatibleDB};
+use tools::{Address, CompatibleDB, tprint, teprint};
 
 const TAGS_TO_KEEP: &[&str] = &[
     "addr:housenumber",
@@ -144,13 +144,13 @@ impl DBNodes {
                 let ser_obj = match bincode::serialize(&obj) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("DBNodes::flush: failed to convert to json: {}", e);
+                        teprint!("DBNodes::flush: failed to convert to json: {}", e);
                         continue;
                     }
                 };
                 let kind = get_kind!(obj);
                 if let Err(e) = stmt.execute(&[&id.inner_id() as &dyn ToSql, &ser_obj, kind]) {
-                    eprintln!("DBNodes::flush: insert failed: {}", e);
+                    teprint!("DBNodes::flush: insert failed: {}", e);
                 }
             }
         }
@@ -342,13 +342,8 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
             .expect("get_nodes: get_objs_and_deps_store failed");
     }
     db_nodes.flush_buffer();
-    println!("Got {} potential addresses!", db_nodes.get_nb_entries());
+    tprint!("Got {} potential addresses!", db_nodes.get_nb_entries());
     db_nodes
-}
-
-fn get_time() -> String {
-    let now = time::Time::now();
-    format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second())
 }
 
 fn get_way_lat_lon(sub_objs: &[Cow<OsmObj>]) -> Option<(f64, f64)> {
@@ -428,12 +423,12 @@ fn iter_nodes<T: CompatibleDB>(db_nodes: DBNodes, db: &mut T) {
 }
 
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(pbf_file: P, db: &mut T) {
-    println!("[{}] Getting nodes...", get_time());
+    tprint!("Getting nodes...");
     let db_nodes = get_nodes(pbf_file);
-    println!("[{}] Got {} nodes", get_time(), db_nodes.count());
-    println!("[{}] Filling address DB...", get_time());
+    tprint!("Got {} nodes", db_nodes.count());
+    tprint!("Filling address DB...");
     iter_nodes(db_nodes, db);
-    println!("[{}] Added {} addresses", get_time(), db.get_nb_addresses());
+    tprint!("Added {} addresses", db.get_nb_addresses());
 }
 
 #[cfg(test)]
