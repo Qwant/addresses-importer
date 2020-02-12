@@ -3,7 +3,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use csv::ReaderBuilder;
-use tools::{Address, CompatibleDB, teprint, tprint};
+use tools::{teprint, tprint, Address, CompatibleDB};
 
 macro_rules! get {
     ($index:expr, $records:expr) => {
@@ -23,12 +23,9 @@ macro_rules! get_f64 {
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(file_path: P, db: &mut T) {
     tprint!("Reading `{}`...", file_path.as_ref().display());
     let file = File::open(file_path).expect("cannot open file");
-    let rdr = ReaderBuilder::new()
-        .has_headers(false)
-        .from_reader(file);
+    let rdr = ReaderBuilder::new().has_headers(false).from_reader(file);
 
-    let mut records = rdr.into_records();
-    while let Some(x) = records.next() {
+    for x in rdr.into_records() {
         let x = match x {
             Ok(x) => x,
             Err(e) => {
