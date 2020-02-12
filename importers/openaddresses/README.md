@@ -1,40 +1,23 @@
 # OpenAddresses importer
 
-This importer import the addresses from [OpenAddresses]. It requires as first argument, the folder
-in which it'll find the data from [OpenAddresses] and runs as follows:
+This is the importer for [OpenAddresses]. It requires as first argument, the folder in which it'll
+find the data from [OpenAddresses].
+
+## How it works
+
+The script goes through all folder and sub-folders, reading all the CSV files available. Each line is then added if it has the following elements:
+
+ * longitude
+ * latitude
+ * street name
+ * house number
+
+## Running it
+
+You can run it like this:
 
 ```bash
 $ cargo run --release -- [folder where you extracted OpenAddresses data]
-```
-
-The generated database has two tables which look like this:
-
-```sql
-CREATE TABLE IF NOT EXISTS addresses(
-    lat REAL NOT NULL,
-    lon REAL NOT NULL,
-    number TEXT,
-    street TEXT NOT NULL,
-    unit TEXT,
-    city TEXT,
-    district TEXT,
-    region TEXT,
-    postcode TEXT,
-    PRIMARY KEY (lat, lon, number, street, city)
-);
-
-CREATE TABLE IF NOT EXISTS addresses_errors(
-    lat REAL,
-    lon REAL,
-    number TEXT,
-    street TEXT,
-    unit TEXT,
-    city TEXT,
-    district TEXT,
-    region TEXT,
-    postcode TEXT,
-    kind TEXT
-);
 ```
 
 ## Using it as a library
