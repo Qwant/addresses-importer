@@ -13,9 +13,6 @@ addons:
       - ubuntu-toolchain-r-test
     packages:
       - gcc-4.8
-      - libsnappy-dev
-      - realpath
-      - pkg-config
 
 before_install:
     - export CC="gcc-4.8"
