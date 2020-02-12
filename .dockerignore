@@ -1,0 +1,6 @@
+**/*.db
+**/target
+**/*.csv
+**/*.vrt
+**/*.pbf
+.git
