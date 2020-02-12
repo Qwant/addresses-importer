@@ -1,42 +1,27 @@
 # BANO importer
 
-This importer import the addresses from [BANO]. It requires as first argument, the csv file (you can
+This is the importer for [BANO]. It requires as first argument, the csv file (you can
 download it from [here](http://bano.openstreetmap.fr/data/)) in which it'll find the data from
-[BANO] and runs as follows:
+[BANO].
+
+## How it works
+
+The script reads the provided CSV file. Each line is then added if it has the following elements:
+
+ * longitude
+ * latitude
+ * street name
+ * house number
+
+## Running it
+
+You can run it like this:
 
 ```bash
 $ cargo run --release -- [BANO csv file]
 ```
 
-The generated database has two tables which look like this:
-
-```sql
-CREATE TABLE IF NOT EXISTS addresses(
-    lat REAL NOT NULL,
-    lon REAL NOT NULL,
-    number TEXT,
-    street TEXT NOT NULL,
-    unit TEXT,
-    city TEXT,
-    district TEXT,
-    region TEXT,
-    postcode TEXT,
-    PRIMARY KEY (lat, lon, number, street, city)
-);
-
-CREATE TABLE IF NOT EXISTS addresses_errors(
-    lat REAL,
-    lon REAL,
-    number TEXT,
-    street TEXT,
-    unit TEXT,
-    city TEXT,
-    district TEXT,
-    region TEXT,
-    postcode TEXT,
-    kind TEXT
-);
-```
+The result will be available into the `addresses.db` file.
 
 ## Using it as a library
 
@@ -44,7 +29,7 @@ You can use this importer as a library/dependency directly. The entry point is:
 
 ```rust
 fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(
-    folder: P,
+    file_path: P,
     db: &mut T,
 );
 ```
