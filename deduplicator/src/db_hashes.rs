@@ -20,11 +20,12 @@ pub struct DbHashes {
 }
 
 impl DbHashes {
-    pub fn new(db_path: PathBuf) -> rusqlite::Result<Self> {
+    pub fn new(db_path: PathBuf, cache_size: Option<u32>) -> rusqlite::Result<Self> {
         let conn = Connection::open(&db_path)?;
+        let cache_size = cache_size.unwrap_or_else(|| 10_000);
 
         conn.pragma_update(None, "page_size", &4096)?;
-        conn.pragma_update(None, "cache_size", &10_000)?;
+        conn.pragma_update(None, "cache_size", &cache_size)?;
         conn.pragma_update(None, "synchronous", &"OFF")?;
         conn.pragma_update(None, "journal_mode", &"OFF")?;
 

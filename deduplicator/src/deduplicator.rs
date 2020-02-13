@@ -23,9 +23,9 @@ pub struct Deduplicator {
 }
 
 impl Deduplicator {
-    pub fn new(output_path: PathBuf) -> rusqlite::Result<Self> {
+    pub fn new(output_path: PathBuf, cache_size: Option<u32>) -> rusqlite::Result<Self> {
         Ok(Self {
-            db: DbHashes::new(output_path)?,
+            db: DbHashes::new(output_path, cache_size)?,
         })
     }
 
