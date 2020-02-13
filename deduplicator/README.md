@@ -49,7 +49,8 @@ true:
 
  - The distance between the two addresses is less than 100 meters and according
    to libpostal they have the same house number and are likely to be in the
-   same street.
+   same street. If there is less than 10 meters between the two addresses,
+   libpostal is allowed to only output `PossibleDuplicate` for street name.
 
  - According to libpostal, the two addresses have the same house number, the
    same street name and the same city (or postal code).

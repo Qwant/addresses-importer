@@ -54,6 +54,20 @@ pub fn is_duplicate(addr_1: &Address, addr_2: &Address) -> bool {
     use rpostal::DuplicateStatus::*;
     let def_opt = POSTAL_CLASSIFIER.get_default_duplicate_options();
 
+    let very_close_duplicate = || {
+        let point_1 = Point::new(addr_1.lon, addr_1.lat);
+        let point_2 = Point::new(addr_2.lon, addr_2.lat);
+
+        (point_1.haversine_distance(&point_2) <= 10.)
+            && opt_field_compare(&addr_1.number, &addr_2.number, |x, y| {
+                POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) >= ExactDuplicate
+            })
+            && field_compare(&addr_1.street, &addr_2.street, |x, y| {
+                POSTAL_CLASSIFIER.is_street_duplicate(x, y, &def_opt)
+                    >= PossibleDuplicateNeedsReview
+            })
+    };
+
     let close_duplicate = || {
         let point_1 = Point::new(addr_1.lon, addr_1.lat);
         let point_2 = Point::new(addr_2.lon, addr_2.lat);
@@ -85,5 +99,5 @@ pub fn is_duplicate(addr_1: &Address, addr_2: &Address) -> bool {
         )
     };
 
-    close_duplicate() || exact_duplicate()
+    very_close_duplicate() || close_duplicate() || exact_duplicate()
 }
