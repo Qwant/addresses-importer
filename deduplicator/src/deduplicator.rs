@@ -346,13 +346,17 @@ impl<'db> tools::CompatibleDB for DbInserter<'db> {
     }
 
     fn get_nb_cities(&self) -> i64 {
-        self.db.count_cities().expect("failed counting cities")
+        self.db.count_cities().unwrap_or_else(|err| {
+            eprintln!("failed counting cities: `{}`", err);
+            0
+        })
     }
 
     fn get_nb_addresses(&self) -> i64 {
-        self.db
-            .count_addresses()
-            .expect("failed counting addresses")
+        self.db.count_addresses().unwrap_or_else(|err| {
+            eprint!("failed counting addresses: `{}`", err);
+            0
+        })
     }
 
     fn get_nb_errors(&self) -> i64 {
