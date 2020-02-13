@@ -75,6 +75,10 @@ struct Params {
     /// Output database as an OpenAddress-like CSV file
     #[structopt(short, long)]
     output_csv: Option<PathBuf>,
+
+    /// Number of pages to be used by SQLITE. One page is 4096 bytes. The default value is 10_000.
+    #[structopt(short, long)]
+    cache_size: Option<u32>,
 }
 
 fn main() -> rusqlite::Result<()> {
@@ -106,7 +110,7 @@ fn main() -> rusqlite::Result<()> {
 
     // Load from all sources
 
-    let mut deduplication = Deduplicator::new(params.output_db)?;
+    let mut deduplication = Deduplicator::new(params.output_db, params.cache_size)?;
 
     for (source, path) in db_sources {
         tprint!("Loading {:?} addresses from database {:?}", source, path);
