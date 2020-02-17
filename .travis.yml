@@ -44,7 +44,5 @@ script:
   - cd deduplicator && cargo check
   - cargo test
   - cd ..
-  # Run OSM importer and a complete deduplication
-  - wget https://download.geofabrik.de/europe/luxembourg-latest.osm.pbf
-  - (cd importers/osm && cargo run --release -- ../../luxembourg-latest.osm.pbf)
-  - (cd deduplicator && cargo run --release -- --osm ../luxembourg-latest.osm.pbf --output-csv luxembourg.csv)
+  # Run a complete deduplication
+  - (cd deduplicator && cargo run --release -- --osm ../importers/osm/test-files/relations_ways.pbf --output-csv test.csv)
