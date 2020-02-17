@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use crossbeam_channel as channel;
-use importer_openaddress::OpenAddress;
+use importer_openaddresses::OpenAddress;
 use itertools::Itertools;
 use libflate::gzip::Encoder;
 use prog_rs::prelude::*;
@@ -193,7 +193,7 @@ impl Deduplicator {
         Ok(())
     }
 
-    pub fn openaddress_dump(&self, path: &PathBuf) -> rusqlite::Result<()> {
+    pub fn openaddresses_dump(&self, path: &PathBuf) -> rusqlite::Result<()> {
         // Fetch addresses
         let conn = self.db.get_conn()?;
         let mut addresses = DbHashes::get_addresses(&conn)?;
