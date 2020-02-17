@@ -3,7 +3,7 @@ extern crate csv;
 extern crate geo;
 extern crate geo_geojson;
 extern crate importer_bano;
-extern crate importer_openaddress;
+extern crate importer_openaddresses;
 extern crate importer_osm;
 #[macro_use]
 extern crate tools;
@@ -27,8 +27,8 @@ mod sources;
 mod utils;
 use std::path::PathBuf;
 
-use tools::Address;
 use structopt::StructOpt;
+use tools::Address;
 
 use deduplicator::Deduplicator;
 use sources::Source;
@@ -46,7 +46,7 @@ struct Params {
 
     /// Path to data from OpenAddress
     #[structopt(long)]
-    openaddress: Vec<PathBuf>,
+    openaddresses: Vec<PathBuf>,
 
     /// Path to data from OSM
     #[structopt(long)]
@@ -58,7 +58,7 @@ struct Params {
 
     /// Path to data from OpenAddress as an SQLite database
     #[structopt(long)]
-    openaddress_db: Vec<PathBuf>,
+    openaddresses_db: Vec<PathBuf>,
 
     /// Path to data from OSM as an SQLite database
     #[structopt(long)]
@@ -92,7 +92,7 @@ fn main() -> rusqlite::Result<()> {
         .chain(params.osm_db.into_iter().map(|s| (Source::Osm, s)))
         .chain(
             params
-                .openaddress_db
+                .openaddresses_db
                 .into_iter()
                 .map(|s| (Source::OpenAddress, s)),
         );
@@ -103,7 +103,7 @@ fn main() -> rusqlite::Result<()> {
         .chain(params.osm.into_iter().map(|s| (Source::Osm, s)))
         .chain(
             params
-                .openaddress
+                .openaddresses
                 .into_iter()
                 .map(|s| (Source::OpenAddress, s)),
         );
@@ -130,7 +130,7 @@ fn main() -> rusqlite::Result<()> {
         let ranking = move |addr: &Address| source.ranking(&addr);
         let import_method = match source {
             Source::Osm => importer_osm::import_addresses,
-            Source::OpenAddress => importer_openaddress::import_addresses,
+            Source::OpenAddress => importer_openaddresses::import_addresses,
             Source::Bano => importer_bano::import_addresses,
         };
 
@@ -144,7 +144,7 @@ fn main() -> rusqlite::Result<()> {
 
     if let Some(output_csv) = params.output_csv {
         tprint!("Write output CSV");
-        deduplication.openaddress_dump(&output_csv)?;
+        deduplication.openaddresses_dump(&output_csv)?;
     }
 
     Ok(())
