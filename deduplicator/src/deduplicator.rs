@@ -1,5 +1,5 @@
 use std::cmp::max;
-use std::fs::File;
+use std::io::Write;
 use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
@@ -7,7 +7,6 @@ use std::thread;
 use crossbeam_channel as channel;
 use importer_openaddresses::OpenAddress;
 use itertools::Itertools;
-use libflate::gzip::Encoder;
 use prog_rs::prelude::*;
 use rusqlite::DropBehavior;
 use tools::Address;
@@ -193,26 +192,25 @@ impl Deduplicator {
         Ok(())
     }
 
-    pub fn openaddresses_dump(&self, path: &PathBuf) -> rusqlite::Result<()> {
+    pub fn openaddresses_dump<W: Write>(&self, mut stream: W) -> rusqlite::Result<()> {
         // Fetch addresses
         let conn = self.db.get_conn()?;
         let mut addresses = DbHashes::get_addresses(&conn)?;
 
-        // Init dump file
-        let file = File::create(path).expect("failed to open dump file");
-        let mut encoder = Encoder::new(file).expect("failed to init encoder");
-
+        // Dump into stream
         {
-            let mut writer = csv::Writer::from_writer(&mut encoder);
+            let mut writer = csv::Writer::from_writer(&mut stream);
 
             for address in addresses.iter()? {
                 writer
                     .serialize(OpenAddress::from(address?))
                     .unwrap_or_else(|err| teprint!("failed to write address: {}", err));
             }
+
+            writer.flush().expect("failed to flush CSV dump");
         }
 
-        encoder.finish().as_result().expect("failed to end dump");
+        stream.flush().unwrap();
         Ok(())
     }
 }
