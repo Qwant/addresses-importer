@@ -1,8 +1,8 @@
 use std::convert::TryInto;
 use std::path::PathBuf;
 
-use tools::Address;
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
+use tools::Address;
 
 const TABLE_ADDRESSES: &str = "addresses";
 const TABLE_HASHES: &str = "_addresses_hashes";
@@ -71,6 +71,28 @@ impl DbHashes {
             "CREATE INDEX IF NOT EXISTS {hashes}_index ON {hashes} (hash);",
             hashes = TABLE_HASHES
         ))
+    }
+
+    pub fn get_addresses_by_street(
+        &self,
+        housenumber: i32,
+        street: &str,
+    ) -> rusqlite::Result<Vec<Address>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT * FROM {} WHERE number=?1 AND street=?2;",
+                TABLE_ADDRESSES,
+            ))
+            .expect("failed to prepare statement");
+
+        let mut addr_iter =
+            stmt.query_map(&[&housenumber, &street as &dyn ToSql], |row| row.try_into())?;
+
+        addr_iter.try_fold(Vec::new(), |mut acc, addr| {
+            acc.push(addr?);
+            Ok(acc)
+        })
     }
 
     fn count_table_entries(&self, table: &str) -> rusqlite::Result<i64> {

@@ -28,7 +28,11 @@ impl Deduplicator {
         })
     }
 
-    pub fn get_db_inserter<F, R>(&mut self, filter: F, ranking: R) -> rusqlite::Result<DbInserter>
+    pub fn get_db_inserter<F, R>(
+        &mut self,
+        filter: F,
+        ranking: R,
+    ) -> rusqlite::Result<DbInserter<F, R>>
     where
         F: Fn(&Address) -> bool + Clone + Send + 'static,
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
@@ -133,7 +137,10 @@ impl Deduplicator {
             tran_insert.set_drop_behavior(DropBehavior::Commit);
             let mut inserter =
                 DbHashes::get_inserter(&mut tran_insert).expect("failed to init inserter");
+
+            // Collect the list of addresses to remove
             let to_delete: std::collections::HashSet<_> = del_receiver.iter().collect();
+
             for id in to_delete {
                 match inserter.insert_to_delete(id) {
                     Err(err) if !is_constraint_violation_error(&err) => {
@@ -236,18 +243,41 @@ impl Deduplicator {
 //            v
 // [     hash_receiver    ] writer thread
 
-pub struct DbInserter<'db> {
+pub struct DbInserter<'db, F, R>
+where
+    F: Fn(&Address) -> bool + Clone + Send + 'static,
+    R: Fn(&Address) -> f64 + Clone + Send + 'static,
+{
     db: &'db DbHashes,
-    addr_sender: channel::Sender<Address>,
-    writer_thread: thread::JoinHandle<()>,
+    addr_sender: Option<channel::Sender<Address>>,
+    writer_thread: Option<thread::JoinHandle<()>>,
+    filter: F,
+    ranking: R,
 }
 
-impl<'db> DbInserter<'db> {
-    pub fn new<F, R>(db: &'db DbHashes, filter: F, ranking: R) -> rusqlite::Result<Self>
-    where
-        F: Fn(&Address) -> bool + Clone + Send + 'static,
-        R: Fn(&Address) -> f64 + Clone + Send + 'static,
-    {
+impl<'db, F, R> DbInserter<'db, F, R>
+where
+    F: Fn(&Address) -> bool + Clone + Send + 'static,
+    R: Fn(&Address) -> f64 + Clone + Send + 'static,
+{
+    pub fn new(db: &'db DbHashes, filter: F, ranking: R) -> rusqlite::Result<Self> {
+        let mut inserter = Self {
+            db,
+            addr_sender: None,
+            writer_thread: None,
+            filter,
+            ranking,
+        };
+        inserter.start_transaction()?;
+        Ok(inserter)
+    }
+
+    fn start_transaction(&mut self) -> rusqlite::Result<()> {
+        // Ensure that previous transactions was commited and channels are empty.
+        self.stop_transaction();
+
+        // --- Create new channels for new threads
+
         let nb_workers = max(3, num_cpus::get()) - 2;
         let (addr_sender, addr_receiver) = channel::bounded(CHANNEL_SIZES);
         let (hash_sender, hash_receiver) = channel::bounded(CHANNEL_SIZES);
@@ -257,8 +287,8 @@ impl<'db> DbInserter<'db> {
         for _ in 0..nb_workers {
             let addr_receiver = addr_receiver.clone();
             let hash_sender = hash_sender.clone();
-            let filter = filter.clone();
-            let ranking = ranking.clone();
+            let filter = self.filter.clone();
+            let ranking = self.ranking.clone();
 
             thread::spawn(move || {
                 for address in addr_receiver.into_iter().filter(filter) {
@@ -279,8 +309,8 @@ impl<'db> DbInserter<'db> {
 
         // --- Init writer thread
 
-        let mut conn = db.get_conn()?;
-        let writer_thread = thread::spawn(move || {
+        let mut conn = self.db.get_conn()?;
+        self.writer_thread = Some(thread::spawn(move || {
             let mut tran = conn.transaction().expect("failed to init transaction");
             tran.set_drop_behavior(DropBehavior::Commit);
             let mut inserter = DbHashes::get_inserter(&mut tran).expect("failed to init inserter");
@@ -307,30 +337,59 @@ impl<'db> DbInserter<'db> {
                     _ => (),
                 }
             }
-        });
+        }));
 
-        Ok(Self {
-            db,
-            addr_sender,
-            writer_thread,
-        })
+        self.addr_sender = Some(addr_sender);
+        Ok(())
     }
-}
 
-impl<'db> Drop for DbInserter<'db> {
-    fn drop(&mut self) {
+    /// Commit and stop transaction, this means that you can't call `self.insert` until
+    /// `self.start_transaction` is called.
+    fn stop_transaction(&mut self) {
         // Close sender channel, this will end writer threads
-        let (closed_sender, _) = channel::unbounded();
-        std::mem::replace(&mut self.addr_sender, closed_sender);
+        self.addr_sender = None;
 
-        // Wait for writer thread to finish writing
-        let writer_thread = std::mem::replace(&mut self.writer_thread, thread::spawn(|| ()));
-        writer_thread.join().expect("failed to join writer thread");
+        // Wait for writer thread to finish writing if any
+        if let Some(writer_thread) = std::mem::replace(&mut self.writer_thread, None) {
+            writer_thread.join().expect("failed to join writer thread");
+        }
+    }
+
+    /// By default DbInserter applies all its actions in a single transaction handled by the worker
+    /// thread. The issue is that this locks database and it is not even possible to execute
+    /// read only queries.
+    ///
+    /// This function will close channels (which will stop all threads), execute an action and
+    /// restart everything.
+    fn borrow_db<A, T>(&mut self, action: A) -> rusqlite::Result<T>
+    where
+        A: FnOnce(&DbHashes) -> rusqlite::Result<T>,
+    {
+        self.stop_transaction();
+        let result = action(self.db);
+        self.start_transaction()?;
+        result
     }
 }
 
-impl<'db> tools::CompatibleDB for DbInserter<'db> {
-    fn flush(&mut self) {}
+impl<'db, F, R> Drop for DbInserter<'db, F, R>
+where
+    F: Fn(&Address) -> bool + Clone + Send + 'static,
+    R: Fn(&Address) -> f64 + Clone + Send + 'static,
+{
+    fn drop(&mut self) {
+        self.stop_transaction()
+    }
+}
+
+impl<'db, F, R> tools::CompatibleDB for DbInserter<'db, F, R>
+where
+    F: Fn(&Address) -> bool + Clone + Send + 'static,
+    R: Fn(&Address) -> f64 + Clone + Send + 'static,
+{
+    fn flush(&mut self) {
+        // Flush doesn't realy make sense while the database is locked.
+    }
 
     fn insert(&mut self, addr: Address) {
         if addr.number.as_ref().map(|num| num == "S/N").unwrap_or(true) {
@@ -339,29 +398,36 @@ impl<'db> tools::CompatibleDB for DbInserter<'db> {
         }
 
         self.addr_sender
+            .as_ref()
+            .expect("failed sending address: transaction is closed")
             .send(addr)
-            .expect("failed sending address: channel may have closed too early");
+            .expect("failed sending address: channel may have closed too early")
     }
 
-    fn get_nb_cities(&self) -> i64 {
-        self.db.count_cities().expect("failed counting cities")
+    fn get_nb_cities(&mut self) -> i64 {
+        self.borrow_db(|db| db.count_cities())
+            .map_err(|err| eprintln!("failed counting cities: '{}'", err))
+            .unwrap_or(0)
     }
 
-    fn get_nb_addresses(&self) -> i64 {
-        self.db
-            .count_addresses()
-            .expect("failed counting addresses")
+    fn get_nb_addresses(&mut self) -> i64 {
+        self.borrow_db(|db| db.count_addresses())
+            .map_err(|err| eprintln!("failed counting addresses: '{}'", err))
+            .unwrap_or(0)
     }
 
-    fn get_nb_errors(&self) -> i64 {
+    fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address> {
+        self.borrow_db(|db| db.get_addresses_by_street(housenumber, street))
+            .map_err(|err| eprintln!("error while retrieving addresses by street: '{}'", err))
+            .unwrap_or_default()
+    }
+
+    // Current implementation for the deduplication actually doesn't log errors.
+    fn get_nb_errors(&mut self) -> i64 {
         0
     }
 
-    fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)> {
-        Vec::new()
-    }
-
-    fn get_address(&self, _: i32, _: &str) -> Vec<Address> {
+    fn get_nb_by_errors_kind(&mut self) -> Vec<(String, i64)> {
         Vec::new()
     }
 }

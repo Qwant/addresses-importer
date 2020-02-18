@@ -26,9 +26,11 @@ before_install:
 
 script:
   - rustc --version
-  - cd deduplicator && cargo check
+  # Check for tools
+  - cd tools && cargo check
   - cargo test
   - cd ..
+  # Check for importers
   - cd importers/osm && cargo check
   - cargo test
   - cd ../..
@@ -38,6 +40,9 @@ script:
   - cd importers/openaddresses && cargo check
   - cargo test
   - cd ../..
-  - cd tools && cargo check
+  # Check for deduplicator
+  - cd deduplicator && cargo check
   - cargo test
   - cd ..
+  # Run a complete deduplication
+  - (cd deduplicator && cargo run --release -- --osm ../importers/osm/test-files/relations_ways.pbf --output-csv test.csv)

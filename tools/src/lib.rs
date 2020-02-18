@@ -1,5 +1,5 @@
 use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::fs;
 
 pub fn get_time() -> String {
@@ -132,11 +132,11 @@ impl DB {
 pub trait CompatibleDB {
     fn flush(&mut self);
     fn insert(&mut self, addr: Address);
-    fn get_nb_cities(&self) -> i64;
-    fn get_nb_addresses(&self) -> i64;
-    fn get_nb_errors(&self) -> i64;
-    fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)>;
-    fn get_address(&self, housenumber: i32, street: &str) -> Vec<Address>;
+    fn get_nb_cities(&mut self) -> i64;
+    fn get_nb_addresses(&mut self) -> i64;
+    fn get_nb_errors(&mut self) -> i64;
+    fn get_nb_by_errors_kind(&mut self) -> Vec<(String, i64)>;
+    fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address>;
 }
 
 impl CompatibleDB for DB {
@@ -230,7 +230,8 @@ impl CompatibleDB for DB {
         }
     }
 
-    fn get_nb_cities(&self) -> i64 {
+    fn get_nb_cities(&mut self) -> i64 {
+        self.flush();
         let mut stmt = self
             .conn
             .prepare("SELECT COUNT(DISTINCT city) FROM addresses;")
@@ -241,7 +242,8 @@ impl CompatibleDB for DB {
         iter.next().expect("no count???").expect("failed")
     }
 
-    fn get_nb_addresses(&self) -> i64 {
+    fn get_nb_addresses(&mut self) -> i64 {
+        self.flush();
         let mut stmt = self
             .conn
             .prepare("SELECT COUNT(*) FROM addresses")
@@ -253,7 +255,8 @@ impl CompatibleDB for DB {
         x + self.buffer.len() as i64
     }
 
-    fn get_nb_errors(&self) -> i64 {
+    fn get_nb_errors(&mut self) -> i64 {
+        self.flush();
         let mut stmt = self
             .conn
             .prepare("SELECT COUNT(*) FROM addresses_errors")
@@ -264,7 +267,8 @@ impl CompatibleDB for DB {
         iter.next().expect("no count???").expect("failed")
     }
 
-    fn get_nb_by_errors_kind(&self) -> Vec<(String, i64)> {
+    fn get_nb_by_errors_kind(&mut self) -> Vec<(String, i64)> {
+        self.flush();
         let mut stmt = self
             .conn
             .prepare("SELECT kind, COUNT(*) FROM addresses_errors GROUP BY kind")
@@ -275,26 +279,15 @@ impl CompatibleDB for DB {
             .collect()
     }
 
-    fn get_address(&self, housenumber: i32, street: &str) -> Vec<Address> {
+    fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address> {
+        self.flush();
         let mut stmt = self.conn
             .prepare("SELECT lat, lon, number, street, unit, city, district, region, postcode FROM addresses WHERE number=?1 AND street=?2")
             .expect("failed to prepare statement");
-        stmt.query_map(&[&housenumber as &dyn ToSql, &street], |row| {
-            Ok(Address {
-                lat: row.get(0)?,
-                lon: row.get(1)?,
-                number: row.get(2)?,
-                street: row.get(3)?,
-                unit: row.get(4)?,
-                city: row.get(5)?,
-                district: row.get(6)?,
-                region: row.get(7)?,
-                postcode: row.get(8)?,
-            })
-        })
-        .expect("failed to insert into errors")
-        .map(|x| x.expect("failed"))
-        .collect()
+        stmt.query_map(&[&housenumber as &dyn ToSql, &street], |row| row.try_into())
+            .expect("failed to insert into errors")
+            .map(|x| x.expect("failed parsing address"))
+            .collect()
     }
 }
 
