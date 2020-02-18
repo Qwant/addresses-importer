@@ -15,14 +15,17 @@ addons:
       - gcc-4.8
 
 before_install:
-    - export CC="gcc-4.8"
-    - git clone https://github.com/openvenues/libpostal
-    - cd libpostal
-    - ./bootstrap.sh
-    - ./configure --datadir=$(pwd)/data
-    - sudo make install
-    - cd ..
-    - sudo ldconfig
+  - export CC="gcc-4.8"
+  - git clone https://github.com/openvenues/libpostal
+  - cd libpostal
+  - ./bootstrap.sh
+  - ./configure --datadir=$(pwd)/data
+  - sudo make install
+  - cd ..
+  - sudo ldconfig
+  - if [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ]; then
+    echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin;
+    fi
 
 script:
   - rustc --version
@@ -46,3 +49,7 @@ script:
   - cd ..
   # Run a complete deduplication
   - (cd deduplicator && cargo run --release -- --osm ../importers/osm/test-files/relations_ways.pbf --output-csv test.csv)
+  - if [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ]; then
+    docker build --label "org.label-schema.vcs-ref=$TRAVIS_COMMIT" -t qwantresearch/addresses-importer .;
+    docker push qwantresearch/addresses-importer;
+    fi
