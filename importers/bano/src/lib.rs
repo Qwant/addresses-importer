@@ -3,7 +3,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use csv::ReaderBuilder;
-use tools::{teprint, tprint, Address, CompatibleDB};
+use tools::{teprintln, tprintln, Address, CompatibleDB};
 
 macro_rules! get {
     ($index:expr, $records:expr) => {
@@ -21,7 +21,9 @@ macro_rules! get_f64 {
 }
 
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(file_path: P, db: &mut T) {
-    tprint!("Reading `{}`...", file_path.as_ref().display());
+    teprintln!("[BANO] Reading `{}`", file_path.as_ref().display());
+    let count_before = db.get_nb_addresses();
+
     let file = File::open(file_path).expect("cannot open file");
     let rdr = ReaderBuilder::new().has_headers(false).from_reader(file);
 
@@ -29,7 +31,7 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(file_path: P, db: &mut 
         let x = match x {
             Ok(x) => x,
             Err(e) => {
-                teprint!("invalid record found: {}", e);
+                teprintln!("[BANO] Invalid record found: {}", e);
                 continue;
             }
         };
@@ -46,5 +48,11 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(file_path: P, db: &mut 
             postcode: get!(3, x).map(|x| x.to_owned()),
         });
     }
-    tprint!("Done!");
+
+    let count_after = db.get_nb_addresses();
+    tprintln!(
+        "[BANO] Added {} addresses (total: {})",
+        count_after - count_before,
+        count_after
+    );
 }

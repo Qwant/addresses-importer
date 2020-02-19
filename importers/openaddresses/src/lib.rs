@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::path::Path;
 
 use csv::Reader;
-use tools::{Address, CompatibleDB, teprint, tprint};
+use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
 
 use serde::{Deserialize, Serialize};
 
@@ -64,30 +64,56 @@ impl From<Address> for OpenAddress {
 }
 
 fn read_csv<P: AsRef<Path>, T: CompatibleDB>(db: &mut T, file_path: P) {
-    tprint!("Reading `{}`...", file_path.as_ref().display());
     let file = File::open(&file_path).expect("cannot open file");
     let mut rdr = Reader::from_reader(file);
 
     for address in rdr.deserialize::<OpenAddress>() {
         match address {
             Ok(address) => db.insert(address.into()),
-            Err(err) => teprint!("invalid record found in {:?}: {}", file_path.as_ref(), err),
+            Err(err) => teprintln!(
+                "[OA] Invalid record found in {:?}: {}",
+                file_path.as_ref(),
+                err
+            ),
         }
     }
-    tprint!("Done reading!");
 }
 
-pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(path: P, db: &mut T) {
-    tprint!("Reading CSV files...");
-    for entry in fs::read_dir(path).expect("folder not found") {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.is_dir() {
-                import_addresses(&path, db);
-            } else if path.extension().unwrap_or_else(|| OsStr::new("")) == "csv" {
-                read_csv(db, &path);
-            }
+pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(base_path: P, db: &mut T) {
+    let count_before = db.get_nb_addresses();
+    let mut count_after = count_before;
+
+    let mut todo = vec![base_path.as_ref().to_path_buf()];
+
+    while let Some(path) = todo.pop() {
+        if path.is_dir() {
+            fs::read_dir(path)
+                .expect("folder not found")
+                .filter_map(|item| {
+                    item.map_err(|err| teprintln!("Failed to read path: {}", err))
+                        .ok()
+                })
+                .for_each(|item| todo.push(item.path()));
+        } else if path.extension().unwrap_or_else(|| OsStr::new("")) == "csv" {
+            let short_name = path.strip_prefix(&base_path).unwrap_or(&path);
+            teprint!("[OA] Reading {:<40} ...\r", short_name.display());
+            read_csv(db, &path);
+
+            let new_count_after = db.get_nb_addresses();
+            teprintln!(
+                "[OA] Reading {:<40} ... {} addresses (total: {})",
+                short_name.display(),
+                new_count_after - count_after,
+                new_count_after
+            );
+
+            count_after = new_count_after;
         }
     }
-    tprint!("Done!");
+
+    tprintln!(
+        "[OA] Added {} addresses (total: {})",
+        count_after - count_before,
+        count_after
+    );
 }

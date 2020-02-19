@@ -1,5 +1,5 @@
 use std::env;
-use tools::{self, CompatibleDB, DB, tprint};
+use tools::{self, teprintln, tprintln, CompatibleDB, DB};
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -9,15 +9,16 @@ fn main() {
     }
     let mut db = DB::new("addresses.db", 1000, true).expect("Failed to create DB");
     osm::import_addresses(&args[1], &mut db);
-    tprint!(
+    tprintln!(
         "Got {} addresses in {} cities (and {} errors)",
         db.get_nb_addresses(),
         db.get_nb_cities(),
         db.get_nb_errors(),
     );
-    println!("Errors by categories:");
+
+    teprintln!("Errors by categories:");
     let rows = db.get_nb_by_errors_kind();
     for (kind, nb) in rows {
-        println!("  {} => {} occurences", kind, nb);
+        teprintln!("  {} => {} occurences", kind, nb);
     }
 }
