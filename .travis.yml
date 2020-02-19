@@ -23,7 +23,7 @@ before_install:
   - sudo make install
   - cd ..
   - sudo ldconfig
-  - if [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ]; then
+  - if [ "$TRAVIS_RUST_VERSION" == "stable" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ]; then
     echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin;
     fi
 
@@ -49,7 +49,7 @@ script:
   - cd ..
   # Run a complete deduplication
   - (cd deduplicator && cargo run --release -- --osm ../importers/osm/test-files/relations_ways.pbf --output-csv test.csv)
-  - if [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ]; then
+  - if [ "$TRAVIS_RUST_VERSION" == "stable" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ]; then
     docker build --label "org.label-schema.vcs-ref=$TRAVIS_COMMIT" -t qwantresearch/addresses-importer .;
     docker push qwantresearch/addresses-importer;
     fi
