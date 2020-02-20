@@ -1,5 +1,5 @@
 use std::cmp::max;
-use std::io::Write;
+use std::io::{stderr, Write};
 use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
@@ -15,7 +15,7 @@ use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::dedupe::{hash_address, is_duplicate};
 use crate::utils::is_constraint_violation_error;
 
-const CHANNEL_SIZES: usize = 100_000;
+const CHANNELS_SIZE: usize = 100_000;
 
 pub struct Deduplicator {
     db: DbHashes,
@@ -72,8 +72,8 @@ impl Deduplicator {
         // [    del_receiver    ] writer thread
 
         let nb_workers = max(3, num_cpus::get()) - 2;
-        let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNEL_SIZES);
-        let (del_sender, del_receiver) = channel::bounded(CHANNEL_SIZES);
+        let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNELS_SIZE);
+        let (del_sender, del_receiver) = channel::bounded(CHANNELS_SIZE);
 
         // --- Init worker threads
 
@@ -88,7 +88,27 @@ impl Deduplicator {
                         // issue is raised, it would be necessary to implement a specific way of
                         // handling big packs (for example by computing more accurate hashes in
                         // RAM).
-                        teprintln!("Performance danger: skipping pack of length {}", pack.len());
+                        //
+                        // Current behaviour is to ignore these large packs to avoid extremely long
+                        // computation time, but dump the content of the pack into stderr to ease
+                        // investigation.
+                        teprintln!(
+                            r"/!\ Performance danger: skipping pack of length {}",
+                            pack.len()
+                        );
+                        teprintln!("Here are the first 10 addresses of the pack:");
+
+                        {
+                            let mut stream = stderr();
+                            let mut writer = csv::Writer::from_writer(&mut stream);
+
+                            for item in pack.into_iter().take(10) {
+                                writer.serialize(OpenAddress::from(item.address)).ok();
+                            }
+
+                            writer.flush().expect("failed to flush CSV dump");
+                        }
+
                         continue;
                     }
 
@@ -287,8 +307,8 @@ where
         // --- Create new channels for new threads
 
         let nb_workers = max(3, num_cpus::get()) - 2;
-        let (addr_sender, addr_receiver) = channel::bounded(CHANNEL_SIZES);
-        let (hash_sender, hash_receiver) = channel::bounded(CHANNEL_SIZES);
+        let (addr_sender, addr_receiver) = channel::bounded(CHANNELS_SIZE);
+        let (hash_sender, hash_receiver) = channel::bounded(CHANNELS_SIZE);
 
         // --- Init worker threads
 
