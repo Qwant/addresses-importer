@@ -4,8 +4,28 @@ matrix:
   include:
     - os: linux
       rust: nightly
+      env: TEST_TOOLS=1
+    - os: linux
+      rust: nightly
+      env: TEST_IMPORTERS=1
+    - os: linux
+      rust: nightly
+      env: TEST_DEDUPLICATOR=1
+    - os: linux
+      rust: nightly
+      env: TEST_DEDUPLICATOR_COMPLETE=1
     - os: linux
       rust: stable
+      env: TEST_TOOLS=1
+    - os: linux
+      rust: stable
+      env: TEST_IMPORTERS=1
+    - os: linux
+      rust: stable
+      env: TEST_DEDUPLICATOR=1
+    - os: linux
+      rust: stable
+      env: TEST_DEDUPLICATOR_COMPLETE=1
 
 addons:
   apt:
@@ -16,40 +36,50 @@ addons:
 
 before_install:
   - export CC="gcc-4.8"
-  - git clone https://github.com/openvenues/libpostal
-  - cd libpostal
-  - ./bootstrap.sh
-  - ./configure --datadir=$(pwd)/data
-  - sudo make install
-  - cd ..
-  - sudo ldconfig
-  - if [ "$TRAVIS_RUST_VERSION" == "stable" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ]; then
+  - if [ "$TEST_DEDUPLICATOR" == "1" ] || [ "$TEST_DEDUPLICATOR_COMPLETE" == "1" ]; then
+    git clone https://github.com/openvenues/libpostal;
+    cd libpostal;
+    ./bootstrap.sh;
+    ./configure --datadir=$(pwd)/data;
+    sudo make install;
+    cd ..;
+    sudo ldconfig;
+    fi
+  - if [ "$TRAVIS_RUST_VERSION" == "stable" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ] && [ "$TEST_TOOLS" == "1" ]; then
     echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin;
     fi
 
 script:
   - rustc --version
   # Check for tools
-  - cd tools && cargo check
-  - cargo test
-  - cd ..
+  - if [ "$TEST_TOOLS" == "1" ]; then
+    cd tools && cargo check;
+    cargo test;
+    cd ..;
+    fi
   # Check for importers
-  - cd importers/osm && cargo check
-  - cargo test
-  - cd ../..
-  - cd importers/bano && cargo check
-  - cargo test
-  - cd ../..
-  - cd importers/openaddresses && cargo check
-  - cargo test
-  - cd ../..
+  - if [ "$TEST_IMPORTERS" == "1" ]; then
+    cd importers/osm && cargo check;
+    cargo test;
+    cd ../..;
+    cd importers/bano && cargo check;
+    cargo test;
+    cd ../..;
+    cd importers/openaddresses && cargo check;
+    cargo test;
+    cd ../..;
+    fi
   # Check for deduplicator
-  - cd deduplicator && cargo check
-  - cargo test
-  - cd ..
+  - if [ "$TEST_DEDUPLICATOR" == "1" ]; then
+    cd deduplicator && cargo check;
+    cargo test;
+    cd ..;
+    fi
   # Run a complete deduplication
-  - (cd deduplicator && cargo run --release -- --osm ../importers/osm/test-files/relations_ways.pbf --output-csv test.csv)
-  - if [ "$TRAVIS_RUST_VERSION" == "stable" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ]; then
+  - if [ "$TEST_DEDUPLICATOR_COMPLETE" == "1"]; then
+    (cd deduplicator && cargo run --release -- --osm ../importers/osm/test-files/relations_ways.pbf --output-csv test.csv);
+    fi
+  - if [ "$TRAVIS_RUST_VERSION" == "stable" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ] && [ "$TEST_TOOLS" == "1" ]; then
     docker build --label "org.label-schema.vcs-ref=$TRAVIS_COMMIT" -t qwantresearch/addresses-importer .;
     docker push qwantresearch/addresses-importer;
     fi
