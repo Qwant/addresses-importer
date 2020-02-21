@@ -12,22 +12,21 @@ env:
 
 cache:
   cargo: true
-  directories:
-    # It appears that "ccache: true" is not working correctly.
-    - /home/travis/.ccache
+  ccache: true
 
 addons:
   apt:
     sources:
       - ubuntu-toolchain-r-test
     packages:
-      - ccache
       - gcc-4.8
 
-env:
-  - CARGO_TARGET_DIR=/home/travis/build/QwantResearch/addresses-importer/target
-
 before_install:
+  - if [ "$TRAVIS_RUST_VERSION" == "stable" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ] && [ "$TEST_TOOLS" == "1" ]; then
+      echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin;
+    fi
+
+install:
   - if [ "$TEST_DEDUPLICATOR" == "1" ] || [ "$TEST_DEDUPLICATOR_COMPLETE" == "1" ]; then
       git clone https://github.com/openvenues/libpostal;
       cd libpostal;
@@ -38,9 +37,8 @@ before_install:
       cd ..;
       sudo ldconfig;
     fi
-  - if [ "$TRAVIS_RUST_VERSION" == "stable" ] && [ "$TRAVIS_PULL_REQUEST_BRANCH" == "" ] && [ "$TRAVIS_BRANCH" == "master" ] && [ "$TEST_TOOLS" == "1" ]; then
-      echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin;
-    fi
+  - CARGO_TARGET_DIR=/home/travis/.cargo/target cargo install sccache
+  - export RUSTC_WRAPPER="/home/travis/.cargo/bin/sccache"
 
 script:
   - rustc --version
@@ -76,3 +74,6 @@ script:
       docker build --label "org.label-schema.vcs-ref=$TRAVIS_COMMIT" -t qwantresearch/addresses-importer .;
       docker push qwantresearch/addresses-importer;
     fi
+
+before_cache:
+  - sccache --show-stats
