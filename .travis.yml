@@ -5,20 +5,27 @@ rust:
   - nightly
   - stable
 env:
-  - TEST_TOOLS=1
-  - TEST_IMPORTERS=1
-  - TEST_DEDUPLICATOR=1
-  - TEST_DEDUPLICATOR_COMPLETE=1
+  global:
+    - CARGO_TARGET_DIR=/home/travis/.cargo/target
+  jobs:
+    - TEST_TOOLS=1
+    - TEST_IMPORTERS=1
+    - TEST_DEDUPLICATOR=1
+    - TEST_DEDUPLICATOR_COMPLETE=1
 
 cache:
   cargo: true
-  ccache: true
+  directories:
+    # It appears that "ccache: true" would activate sccache instead of ccache
+    # for Rust environment.
+    - /home/travis/.ccache
 
 addons:
   apt:
     sources:
       - ubuntu-toolchain-r-test
     packages:
+      - ccache
       - gcc-4.8
 
 before_install:
@@ -37,34 +44,27 @@ install:
       cd ..;
       sudo ldconfig;
     fi
-  - CARGO_TARGET_DIR=/home/travis/.cargo/target cargo install sccache
-  - export RUSTC_WRAPPER="/home/travis/.cargo/bin/sccache"
 
 script:
   - rustc --version
   # Check for tools
   - if [ "$TEST_TOOLS" == "1" ]; then
-      cd tools && cargo check;
-      cargo test;
-      cd ..;
+      (cd tools && cargo check)
+      && (cd tools && cargo test);
     fi
   # Check for importers
   - if [ "$TEST_IMPORTERS" == "1" ]; then
-      cd importers/osm && cargo check;
-      cargo test;
-      cd ../..;
-      cd importers/bano && cargo check;
-      cargo test;
-      cd ../..;
-      cd importers/openaddresses && cargo check;
-      cargo test;
-      cd ../..;
+      (cd importers/osm && cargo check)
+      && (cd importers/osm && cargo test);
+      (cd importers/bano && cargo check)
+      && (cd importers/bano && cargo test);
+      (cd importers/openaddresses && cargo check)
+      && (cd importers/openaddresses && cargo test);
     fi
   # Check for deduplicator
   - if [ "$TEST_DEDUPLICATOR" == "1" ]; then
-      cd deduplicator && cargo check;
-      cargo test;
-      cd ..;
+      (cd deduplicator && cargo check)
+      && (cd deduplicator && cargo test);
     fi
   # Run a complete deduplication
   - if [ "$TEST_DEDUPLICATOR_COMPLETE" == "1"]; then
@@ -76,4 +76,5 @@ script:
     fi
 
 before_cache:
-  - sccache --show-stats
+  - du -sh /home/travis/.cargo/*
+  - ccache --show-stats
