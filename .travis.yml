@@ -1,31 +1,14 @@
+os: linux
 dist: xenial
 language: rust
-matrix:
-  include:
-    - os: linux
-      rust: nightly
-      env: TEST_TOOLS=1
-    - os: linux
-      rust: nightly
-      env: TEST_IMPORTERS=1
-    - os: linux
-      rust: nightly
-      env: TEST_DEDUPLICATOR=1
-    - os: linux
-      rust: nightly
-      env: TEST_DEDUPLICATOR_COMPLETE=1
-    - os: linux
-      rust: stable
-      env: TEST_TOOLS=1
-    - os: linux
-      rust: stable
-      env: TEST_IMPORTERS=1
-    - os: linux
-      rust: stable
-      env: TEST_DEDUPLICATOR=1
-    - os: linux
-      rust: stable
-      env: TEST_DEDUPLICATOR_COMPLETE=1
+rust:
+  - nightly
+  - stable
+env:
+  - TEST_TOOLS=1
+  - TEST_IMPORTERS=1
+  - TEST_DEDUPLICATOR=1
+  - TEST_DEDUPLICATOR_COMPLETE=1
 
 addons:
   apt:
