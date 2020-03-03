@@ -8,18 +8,37 @@ pub fn get_time() -> String {
 }
 
 #[macro_export]
+macro_rules! tformat {
+    ($($arg:tt)*) => {{
+        format!("[{}] {}", $crate::get_time(), format!($($arg)*))
+    }}
+}
+
+#[macro_export]
 macro_rules! tprint {
     ($($arg:tt)*) => {{
-        use tools::get_time;
-        println!("[{}] {}", get_time(), format!($($arg)*));
+        print!("{}", $crate::tformat!($($arg)*));
     }}
 }
 
 #[macro_export]
 macro_rules! teprint {
     ($($arg:tt)*) => {{
-        use tools::get_time;
-        eprintln!("[{}] {}", get_time(), format!($($arg)*));
+        eprint!("{}", $crate::tformat!($($arg)*));
+    }}
+}
+
+#[macro_export]
+macro_rules! tprintln {
+    ($($arg:tt)*) => {{
+        println!("{}", $crate::tformat!($($arg)*));
+    }}
+}
+
+#[macro_export]
+macro_rules! teprintln {
+    ($($arg:tt)*) => {{
+        eprintln!("{}", $crate::tformat!($($arg)*));
     }}
 }
 

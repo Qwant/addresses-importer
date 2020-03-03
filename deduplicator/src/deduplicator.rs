@@ -1,5 +1,5 @@
 use std::cmp::max;
-use std::io::Write;
+use std::io::{stderr, Write};
 use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
@@ -15,7 +15,7 @@ use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::dedupe::{hash_address, is_duplicate};
 use crate::utils::is_constraint_violation_error;
 
-const CHANNEL_SIZES: usize = 100_000;
+const CHANNELS_SIZE: usize = 100_000;
 
 pub struct Deduplicator {
     db: DbHashes,
@@ -41,14 +41,14 @@ impl Deduplicator {
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
-        tprint!("Build index on hashes");
+        teprintln!("Build index on hashes");
         self.db.create_hashes_index()?;
 
         // --- Query collisions from DB
         let count_addresses_before = self.db.count_addresses()?;
         let count_hashes = self.db.count_hashes()?;
 
-        tprint!(
+        teprintln!(
             "Compute hash collisions ({} addresses, {} hashes)",
             count_addresses_before,
             count_hashes
@@ -72,8 +72,8 @@ impl Deduplicator {
         // [    del_receiver    ] writer thread
 
         let nb_workers = max(3, num_cpus::get()) - 2;
-        let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNEL_SIZES);
-        let (del_sender, del_receiver) = channel::bounded(CHANNEL_SIZES);
+        let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNELS_SIZE);
+        let (del_sender, del_receiver) = channel::bounded(CHANNELS_SIZE);
 
         // --- Init worker threads
 
@@ -88,7 +88,27 @@ impl Deduplicator {
                         // issue is raised, it would be necessary to implement a specific way of
                         // handling big packs (for example by computing more accurate hashes in
                         // RAM).
-                        teprint!("Performance danger: skipping pack of length {}", pack.len());
+                        //
+                        // Current behaviour is to ignore these large packs to avoid extremely long
+                        // computation time, but dump the content of the pack into stderr to ease
+                        // investigation.
+                        teprintln!(
+                            r"/!\ Performance danger: skipping pack of length {}",
+                            pack.len()
+                        );
+                        teprintln!("Here are the first 10 addresses of the pack:");
+
+                        {
+                            let mut stream = stderr();
+                            let mut writer = csv::Writer::from_writer(&mut stream);
+
+                            for item in pack.into_iter().take(10) {
+                                writer.serialize(OpenAddress::from(item.address)).ok();
+                            }
+
+                            writer.flush().expect("failed to flush CSV dump");
+                        }
+
                         continue;
                     }
 
@@ -144,7 +164,7 @@ impl Deduplicator {
             for id in to_delete {
                 match inserter.insert_to_delete(id) {
                     Err(err) if !is_constraint_violation_error(&err) => {
-                        teprint!("failed to insert id to delete in the database: {}", err)
+                        teprintln!("Failed to insert id to delete in the database: {}", err)
                     }
                     _ => (),
                 }
@@ -158,8 +178,10 @@ impl Deduplicator {
             .iter()?
             .progress()
             .with_iter_size(count_hashes as usize)
+            .with_prefix("Filter colisions")
+            .with_output_stream(prog_rs::OutputStream::StdErr)
             .filter_map(|item| {
-                item.map_err(|err| teprint!("failed retrieving hash: {}", err))
+                item.map_err(|err| teprintln!("Failed retrieving hash: {}", err))
                     .ok()
             })
             .group_by(|addr| addr.hash);
@@ -182,17 +204,23 @@ impl Deduplicator {
     }
 
     pub fn apply_and_clean(&self, keep_construction_tables: bool) -> rusqlite::Result<()> {
-        tprint!(
-            "Appling deletion ({} addresses)",
-            self.db.count_to_delete()?
-        );
+        let count_to_delete = self.db.count_to_delete()?;
+        teprint!("Deleting {} addresses ...\r", count_to_delete);
+
         self.db.apply_addresses_to_delete()?;
 
+        let count_remain = self.db.count_addresses()?;
+        teprintln!(
+            "Deleting {} addresses ... {} remain",
+            count_to_delete,
+            count_remain
+        );
+
         if !keep_construction_tables {
-            tprint!("Cleaning database");
+            teprintln!("Cleaning database");
             self.db.cleanup_database()?;
 
-            tprint!("Vacuum database");
+            teprintln!("Vacuum database");
             self.db.vacuum()?;
         }
 
@@ -211,7 +239,7 @@ impl Deduplicator {
             for address in addresses.iter()? {
                 writer
                     .serialize(OpenAddress::from(address?))
-                    .unwrap_or_else(|err| teprint!("failed to write address: {}", err));
+                    .unwrap_or_else(|err| teprintln!("Failed to write address: {}", err));
             }
 
             writer.flush().expect("failed to flush CSV dump");
@@ -279,8 +307,8 @@ where
         // --- Create new channels for new threads
 
         let nb_workers = max(3, num_cpus::get()) - 2;
-        let (addr_sender, addr_receiver) = channel::bounded(CHANNEL_SIZES);
-        let (hash_sender, hash_receiver) = channel::bounded(CHANNEL_SIZES);
+        let (addr_sender, addr_receiver) = channel::bounded(CHANNELS_SIZE);
+        let (hash_sender, hash_receiver) = channel::bounded(CHANNELS_SIZE);
 
         // --- Init worker threads
 
@@ -296,7 +324,7 @@ where
                     let hashes: Vec<_> = hash_address(&address).collect();
 
                     if hashes.is_empty() {
-                        teprint!("ignoring an address that can't be hashed: {:?}", address);
+                        teprintln!("Ignoring an address that can't be hashed: {:?}", address);
                         continue;
                     }
 
@@ -325,14 +353,14 @@ where
                                 .insert_hash(addr_id, hash as i64)
                                 .map_err(|err| {
                                     if !is_constraint_violation_error(&err) {
-                                        teprint!("failed inserting hash: {}", err);
+                                        teprintln!("Failed inserting hash: {}", err);
                                     }
                                 })
                                 .ok();
                         }
                     }
                     Err(err) if !is_constraint_violation_error(&err) => {
-                        teprint!("failed inserting address: {}", err);
+                        teprintln!("Failed inserting address: {}", err);
                     }
                     _ => (),
                 }
@@ -406,19 +434,19 @@ where
 
     fn get_nb_cities(&mut self) -> i64 {
         self.borrow_db(|db| db.count_cities())
-            .map_err(|err| eprintln!("failed counting cities: '{}'", err))
+            .map_err(|err| eprintln!("Failed counting cities: '{}'", err))
             .unwrap_or(0)
     }
 
     fn get_nb_addresses(&mut self) -> i64 {
         self.borrow_db(|db| db.count_addresses())
-            .map_err(|err| eprintln!("failed counting addresses: '{}'", err))
+            .map_err(|err| eprintln!("Failed counting addresses: '{}'", err))
             .unwrap_or(0)
     }
 
     fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address> {
         self.borrow_db(|db| db.get_addresses_by_street(housenumber, street))
-            .map_err(|err| eprintln!("error while retrieving addresses by street: '{}'", err))
+            .map_err(|err| eprintln!("Error while retrieving addresses by street: '{}'", err))
             .unwrap_or_default()
     }
 

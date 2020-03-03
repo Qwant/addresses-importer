@@ -10,7 +10,7 @@ use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
 
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
 
-use tools::{teprint, tprint, Address, CompatibleDB};
+use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
 
 const TAGS_TO_KEEP: &[&str] = &[
     "addr:housenumber",
@@ -115,17 +115,6 @@ impl DBNodes {
         })
     }
 
-    fn get_nb_entries(&self) -> i64 {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT COUNT(*) FROM nodes")
-            .expect("failed to prepare");
-        let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
-            .expect("query_map failed");
-        iter.next().expect("no count???").expect("failed")
-    }
-
     fn flush_buffer(&mut self) {
         if self.buffer.is_empty() {
             return;
@@ -144,13 +133,13 @@ impl DBNodes {
                 let ser_obj = match bincode::serialize(&obj) {
                     Ok(s) => s,
                     Err(e) => {
-                        teprint!("DBNodes::flush: failed to convert to json: {}", e);
+                        teprintln!("[OSM] DBNodes::flush: failed to convert to json: {}", e);
                         continue;
                     }
                 };
                 let kind = get_kind!(obj);
                 if let Err(e) = stmt.execute(&[&id.inner_id() as &dyn ToSql, &ser_obj, kind]) {
-                    teprint!("DBNodes::flush: insert failed: {}", e);
+                    teprintln!("[OSM] DBNodes::flush: insert failed: {}", e);
                 }
             }
         }
@@ -342,7 +331,6 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
             .expect("get_nodes: get_objs_and_deps_store failed");
     }
     db_nodes.flush_buffer();
-    tprint!("Got {} potential addresses!", db_nodes.get_nb_entries());
     db_nodes
 }
 
@@ -422,12 +410,20 @@ fn iter_nodes<T: CompatibleDB>(db_nodes: DBNodes, db: &mut T) {
 }
 
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(pbf_file: P, db: &mut T) {
-    tprint!("Getting nodes...");
+    let count_before = db.get_nb_addresses();
+
+    teprint!("[OSM] Getting nodes ...\r");
     let db_nodes = get_nodes(pbf_file);
-    tprint!("Got {} nodes", db_nodes.count());
-    tprint!("Filling address DB...");
+    teprintln!("[OSM] Getting nodes ... {} nodes", db_nodes.count());
+
     iter_nodes(db_nodes, db);
-    tprint!("Added {} addresses", db.get_nb_addresses());
+
+    let count_after = db.get_nb_addresses();
+    tprintln!(
+        "[OSM] Added {} addresses (total: {})",
+        count_after - count_before,
+        count_after
+    );
 }
 
 #[cfg(test)]

@@ -120,7 +120,7 @@ fn main() -> rusqlite::Result<()> {
     let mut deduplication = Deduplicator::new(params.output_db, Some(params.cache_size))?;
 
     for (source, path) in db_sources {
-        tprint!("Loading {:?} addresses from database {:?}", source, path);
+        tprintln!("Loading {:?} addresses from database {:?}...", source, path);
 
         load_from_sqlite(
             &mut deduplication,
@@ -131,7 +131,7 @@ fn main() -> rusqlite::Result<()> {
     }
 
     for (source, path) in raw_sources {
-        tprint!("Loading {:?} addresses from path {:?}", source, path);
+        tprintln!("Loading {:?} addresses from path {:?}...", source, path);
 
         let filter = move |addr: &Address| source.filter(&addr);
         let ranking = move |addr: &Address| source.ranking(&addr);
@@ -146,19 +146,22 @@ fn main() -> rusqlite::Result<()> {
 
     // --- Apply deduplication
 
+    tprintln!("Deduplication...");
     deduplication.compute_duplicates()?;
+
+    tprintln!("Cleaning...");
     deduplication.apply_and_clean(params.keep)?;
 
     // --- Dump CSV
 
     if let Some(output_csv) = params.output_csv {
-        tprint!("Write CSV");
+        tprintln!("Write CSV...");
         let file = File::create(output_csv).expect("failed to create dump file");
         deduplication.openaddresses_dump(file)?;
     }
 
     if let Some(compressed_csv) = params.output_compressed_csv {
-        tprint!("Write compressed CSV");
+        tprintln!("Write compressed CSV...");
         let file = File::create(compressed_csv).expect("failed to create dump file");
         let mut encoder = gzip::Encoder::new(file).expect("failed to init gzip encoder");
         deduplication.openaddresses_dump(&mut encoder)?;

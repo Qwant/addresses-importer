@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use crate::deduplicator::Deduplicator;
 
-use tools::{Address, CompatibleDB};
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rusqlite::{Connection, NO_PARAMS};
+use tools::{Address, CompatibleDB};
 
 pub fn field_compare<T>(
     field1: &Option<T>,
@@ -90,8 +90,9 @@ where
         .progress()
         .with_iter_size(nb_addresses)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))
+        .with_output_stream(prog_rs::OutputStream::StdErr)
         .filter_map(|addr| {
-            addr.map_err(|e| teprint!("failed to read address from DB: {}", e))
+            addr.map_err(|e| teprintln!("Failed to read address from DB: {}", e))
                 .ok()
         });
 
