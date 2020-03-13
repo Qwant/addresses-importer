@@ -3,8 +3,8 @@ use std::hash::{Hash, Hasher};
 
 use geo::prelude::*;
 use geo::Point;
-use tools::Address;
 use rpostal;
+use tools::Address;
 
 use crate::utils::{field_compare, opt_field_compare, postal_repr};
 
@@ -54,11 +54,12 @@ pub fn is_duplicate(addr_1: &Address, addr_2: &Address) -> bool {
     use rpostal::DuplicateStatus::*;
     let def_opt = POSTAL_CLASSIFIER.get_default_duplicate_options();
 
-    let very_close_duplicate = || {
-        let point_1 = Point::new(addr_1.lon, addr_1.lat);
-        let point_2 = Point::new(addr_2.lon, addr_2.lat);
+    let point_1 = Point::new(addr_1.lon, addr_1.lat);
+    let point_2 = Point::new(addr_2.lon, addr_2.lat);
+    let dist = point_1.haversine_distance(&point_2);
 
-        (point_1.haversine_distance(&point_2) <= 10.)
+    let very_close_duplicate = || {
+        dist < 10.
             && opt_field_compare(&addr_1.number, &addr_2.number, |x, y| {
                 POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) >= ExactDuplicate
             })
@@ -69,10 +70,7 @@ pub fn is_duplicate(addr_1: &Address, addr_2: &Address) -> bool {
     };
 
     let close_duplicate = || {
-        let point_1 = Point::new(addr_1.lon, addr_1.lat);
-        let point_2 = Point::new(addr_2.lon, addr_2.lat);
-
-        (point_1.haversine_distance(&point_2) <= 100.)
+        dist < 100.
             && opt_field_compare(&addr_1.number, &addr_2.number, |x, y| {
                 POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) >= ExactDuplicate
             })
@@ -82,22 +80,16 @@ pub fn is_duplicate(addr_1: &Address, addr_2: &Address) -> bool {
     };
 
     let exact_duplicate = || {
-        // using "// -" to force rustfmt output
-        opt_field_compare(&addr_1.number, &addr_1.number, |x, y| {
+        opt_field_compare(&addr_1.number, &addr_2.number, |x, y| {
             POSTAL_CLASSIFIER.is_house_number_duplicate(x, y, &def_opt) == ExactDuplicate
-        }) // -
-        && field_compare(&addr_1.street, &addr_2.street, |x, y| {
+        }) && field_compare(&addr_1.street, &addr_2.street, |x, y| {
             POSTAL_CLASSIFIER.is_street_duplicate(x, y, &def_opt) == ExactDuplicate
-        }) // -
-        && ( // -
-            field_compare(&addr_1.postcode, &addr_2.postcode, |x, y| {
-                POSTAL_CLASSIFIER.is_postal_code_duplicate(x, y, &def_opt) == ExactDuplicate
-            }) // -
-            || field_compare(&addr_1.city, &addr_2.city, |x, y| {
-                POSTAL_CLASSIFIER.is_name_duplicate(x, y, &def_opt) == ExactDuplicate
-            })
-        )
+        }) && field_compare(&addr_1.city, &addr_2.city, |x, y| {
+            POSTAL_CLASSIFIER.is_name_duplicate(x, y, &def_opt) == ExactDuplicate
+        }) && field_compare(&addr_1.postcode, &addr_2.postcode, |x, y| {
+            POSTAL_CLASSIFIER.is_postal_code_duplicate(x, y, &def_opt) == ExactDuplicate
+        })
     };
 
-    very_close_duplicate() || close_duplicate() || exact_duplicate()
+    dist < 1_000. && (very_close_duplicate() || close_duplicate() || exact_duplicate())
 }

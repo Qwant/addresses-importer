@@ -48,12 +48,18 @@ Two addresses are considered as duplicates if one of these two properties is
 true:
 
  - The distance between the two addresses is less than 100 meters and according
-   to libpostal they have the same house number and are likely to be in the
-   same street. If there is less than 10 meters between the two addresses,
-   libpostal is allowed to only output `PossibleDuplicate` for street name.
+   to libpostal and:
+     - have the same house number
+     - are likely to be in the same street (if there is less than 10 meters
+       between the two addresses, libpostal is allowed to only output
+       `PossibleDuplicate` for street name)
 
- - According to libpostal, the two addresses have the same house number, the
-   same street name and the same city (or postal code).
+ - According to libpostal, the two addresses have:
+     - the same house number
+     - the same street name
+     - the same city name
+     - the same postal code
+     - they are distant of less than 1km
 
 
 Implementation details
