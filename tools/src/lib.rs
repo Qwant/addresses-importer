@@ -2,11 +2,22 @@ use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
 use std::convert::{TryFrom, TryInto};
 use std::fs;
 
+/// Returns a `String` representing the current time under the form "HH:MM:SS".
 pub fn get_time() -> String {
     let now = time::Time::now();
     format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second())
 }
 
+/// Prints the message on stdout prepended by the current time.
+///
+/// Example:
+///
+/// ```
+/// use tools::tprint;
+///
+/// tprint!("Something to print");
+/// tprint!("Printing even more: {}", 32);
+/// ```
 #[macro_export]
 macro_rules! tformat {
     ($($arg:tt)*) => {{
@@ -21,6 +32,16 @@ macro_rules! tprint {
     }}
 }
 
+/// Prints the message on stderr prepended by the current time.
+///
+/// Example:
+///
+/// ```
+/// use tools::teprint;
+///
+/// teprint!("Something to print");
+/// teprint!("Printing even more: {}", 32);
+/// ```
 #[macro_export]
 macro_rules! teprint {
     ($($arg:tt)*) => {{
@@ -42,6 +63,8 @@ macro_rules! teprintln {
     }}
 }
 
+/// A type representing an address. Only the `lat` and `lon` fields aren't optional because all the
+/// others might not be provided depending where we're getting the address from.
 #[derive(Clone, Debug, PartialOrd, PartialEq)]
 pub struct Address {
     pub lat: f64,
@@ -58,6 +81,26 @@ pub struct Address {
 impl Address {
     pub const NB_FIELDS: usize = 9;
 
+    /// Returns the number of not empty fields.
+    ///
+    /// Example:
+    ///
+    /// ```
+    /// use tools::Address;
+    ///
+    /// let addr = Address {
+    ///     lat: 0.,
+    ///     lon: 0.,
+    ///     number: Some("12".to_owned()),
+    ///     street: None,
+    ///     unit: None,
+    ///     city: None,
+    ///     district: None,
+    ///     region: None,
+    ///     postcode: None,
+    /// };
+    /// assert_eq!(addr.count_non_empty_fields(), 3);
+    /// ```
     pub fn count_non_empty_fields(&self) -> usize {
         2 // lon & lat
             + self.number.is_some() as usize
@@ -88,6 +131,9 @@ impl<'r> TryFrom<&Row<'r>> for Address {
     }
 }
 
+/// Type holding a SQLite DB connection and handling interactions with it.
+///
+/// Note: When dropped, a flush is performed.
 pub struct DB {
     conn: Connection,
     buffer: Vec<Address>,
@@ -95,6 +141,24 @@ pub struct DB {
 }
 
 impl DB {
+    /// Creates a new instance of `BD`.
+    ///
+    /// Arguments:
+    ///
+    /// * `db_files` is where the content will be stored.
+    /// * `db_buffer_size` is how much can be stored in RAM.
+    /// * if `remove_db_data` is set to `true`, any existing content will be removed.
+    ///
+    /// Example:
+    ///
+    /// ```no_run
+    /// use tools::DB;
+    ///
+    /// let db = match DB::new("addresses.db", 10000, true) {
+    ///     Ok(db) => db,
+    ///     Err(e) => panic!("failed to create DB: {}", e),
+    /// };
+    /// ```
     pub fn new(db_file: &str, db_buffer_size: usize, remove_db_data: bool) -> Result<Self, String> {
         if remove_db_data {
             let _ = fs::remove_file(db_file); // we ignore any potential error
@@ -148,13 +212,180 @@ impl DB {
     }
 }
 
+/// A trait used by importers. If you want to use another type than `DB`, you'll have to implement
+/// this trait on it.
 pub trait CompatibleDB {
+    /// Flushes all on-hold data.
+    ///
+    /// Example:
+    ///
+    /// ```no_run
+    /// use tools::{Address, CompatibleDB, DB};
+    ///
+    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+    /// db.insert(Address {
+    ///     lat: 0.,
+    ///     lon: 0.,
+    ///     number: Some("12".to_owned()),
+    ///     street: Some("rue des champignons".to_owned()),
+    ///     unit: None,
+    ///     city: None,
+    ///     district: None,
+    ///     region: None,
+    ///     postcode: None,
+    /// });
+    /// db.flush();
+    /// ```
     fn flush(&mut self);
+    /// Inserts a new address.
+    ///
+    /// Example:
+    ///
+    /// ```no_run
+    /// use tools::{Address, CompatibleDB, DB};
+    ///
+    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+    /// db.insert(Address {
+    ///     lat: 0.,
+    ///     lon: 0.,
+    ///     number: Some("12".to_owned()),
+    ///     street: Some("rue des champignons".to_owned()),
+    ///     unit: None,
+    ///     city: None,
+    ///     district: None,
+    ///     region: None,
+    ///     postcode: None,
+    /// });
+    /// ```
     fn insert(&mut self, addr: Address);
+    /// Counts the number of different inserted cities.
+    ///
+    /// Example:
+    ///
+    /// ```no_run
+    /// use tools::{Address, CompatibleDB, DB};
+    ///
+    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+    /// assert_eq!(db.get_nb_cities(), 0);
+    /// db.insert(Address {
+    ///     lat: 0.,
+    ///     lon: 0.,
+    ///     number: Some("12".to_owned()),
+    ///     street: Some("rue des champignons".to_owned()),
+    ///     unit: None,
+    ///     city: Some("Paris".to_owned()),
+    ///     district: None,
+    ///     region: None,
+    ///     postcode: None,
+    /// });
+    /// assert_eq!(db.get_nb_cities(), 1);
+    /// ```
     fn get_nb_cities(&mut self) -> i64;
+    /// Counts the number of inserted addresses.
+    ///
+    /// Example:
+    ///
+    /// ```no_run
+    /// use tools::{Address, CompatibleDB, DB};
+    ///
+    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+    /// assert_eq!(db.get_nb_addresses(), 0);
+    /// db.insert(Address {
+    ///     lat: 0.,
+    ///     lon: 0.,
+    ///     number: Some("12".to_owned()),
+    ///     street: Some("rue des champignons".to_owned()),
+    ///     unit: None,
+    ///     city: None,
+    ///     district: None,
+    ///     region: None,
+    ///     postcode: None,
+    /// });
+    /// assert_eq!(db.get_nb_addresses(), 1);
+    /// ```
     fn get_nb_addresses(&mut self) -> i64;
+    /// Returnss the number of errors that occurred. An error occurs generally when an address is
+    /// considered as a duplicate or is missing one of the mandatory field (such as the street name
+    /// for example).
+    ///
+    /// Example:
+    ///
+    /// ```no_run
+    /// use tools::{Address, CompatibleDB, DB};
+    ///
+    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+    /// assert_eq!(db.get_nb_addresses(), 0);
+    /// db.insert(Address {
+    ///     lat: 0.,
+    ///     lon: 0.,
+    ///     number: Some("12".to_owned()),
+    ///     street: None,
+    ///     unit: None,
+    ///     city: None,
+    ///     district: None,
+    ///     region: None,
+    ///     postcode: None,
+    /// });
+    /// assert_eq!(db.get_nb_errors(), 1);
+    /// ```
     fn get_nb_errors(&mut self) -> i64;
+    /// Returns the number of errors grouped by kind. A kind is determined by the DB returned error
+    /// generally.
+    ///
+    /// Example:
+    ///
+    /// ```no_run
+    /// use tools::{Address, CompatibleDB, DB};
+    ///
+    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+    /// assert_eq!(db.get_nb_addresses(), 0);
+    /// db.insert(Address {
+    ///     lat: 0.,
+    ///     lon: 0.,
+    ///     number: Some("12".to_owned()),
+    ///     street: None,
+    ///     unit: None,
+    ///     city: None,
+    ///     district: None,
+    ///     region: None,
+    ///     postcode: None,
+    /// });
+    /// assert_eq!(db.get_nb_by_errors_kind(), vec![("Missing mandataory field".to_owned(), 1)]);
+    /// ```
     fn get_nb_by_errors_kind(&mut self) -> Vec<(String, i64)>;
+    /// Returns a list of addresses matching the given housenumber and street name.
+    ///
+    /// Example:
+    ///
+    /// ```no_run
+    /// use tools::{Address, CompatibleDB, DB};
+    ///
+    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+    /// assert_eq!(db.get_nb_addresses(), 0);
+    /// db.insert(Address {
+    ///     lat: 0.,
+    ///     lon: 0.,
+    ///     number: Some("12".to_owned()),
+    ///     street: Some("rue des champignons".to_owned()),
+    ///     unit: None,
+    ///     city: None,
+    ///     district: None,
+    ///     region: None,
+    ///     postcode: None,
+    /// });
+    /// assert_eq!(db.get_address(12, "rue des champignons"),
+    ///            vec![Address {
+    ///                 lat: 0.,
+    ///                 lon: 0.,
+    ///                 number: Some("12".to_owned()),
+    ///                 street: Some("rue des champignons".to_owned()),
+    ///                 unit: None,
+    ///                 city: None,
+    ///                 district: None,
+    ///                 region: None,
+    ///                 postcode: None,
+    ///             }]);
+    /// ```
     fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address>;
 }
 
