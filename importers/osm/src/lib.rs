@@ -1,3 +1,20 @@
+//! Reading a **PBF** file is actually complicated: elements refer to each others using IDs, forcing
+//! the parser to go back and forth in the file (unless you have a lot of available RAM!).
+//!
+//! So for this, we run it in 2 passes:
+//!  1. We store all matching objects (filter rules explained below) in a temporary database.
+//!  2. We iter through the stored objects to put them in the provided `db`.
+//!
+//! In here, we filter objects as follow:
+//!  * If it's a **node**, we look if it has the tags `addr:housenumber` and `addr:street`. If so,
+//!    we consider it as an address and add it.
+//!  * If it's a **way**, it needs to contain the tags `addr:housenumber` and `addr:street` and also
+//!    at least one node.
+//!  * If it's a **relation**, it needs to contains the tag `name` and the tag `type` with the value
+//!    `associatedStreet` and at least one sub-reference. Then we read the sub-references an apply
+//!    the same rules depending if's a **node** or a **way**. We currently ignore the sub-references
+//!    if they are **relation**s.
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -12,6 +29,7 @@ use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
 
 use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
 
+/// Used to make the stored elements in the first lighter by removing all the unused tags.
 const TAGS_TO_KEEP: &[&str] = &[
     "addr:housenumber",
     "addr:street",
@@ -22,6 +40,7 @@ const TAGS_TO_KEEP: &[&str] = &[
     "addr:postcode",
 ];
 
+/// We need to know what kind the element is when reading the database in order to deserialize it.
 macro_rules! get_kind {
     ($obj:expr) => {
         if $obj.is_node() {
@@ -34,6 +53,19 @@ macro_rules! get_kind {
     };
 }
 
+/// Convert an element's tags into an address.
+///
+/// In here, we look at the following tags:
+///  * `addr:housenumber`
+///  * `addr:street`
+///  * `addr:unit`
+///  * `addr:city`
+///  * `addr:district`
+///  * `addr:region`
+///  * `addr:postcode`
+///
+/// This might evolve in the future considering that some countries use different tags to store the
+/// same information.
 fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
     let mut addr = Address {
         lat,
@@ -76,6 +108,7 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
     addr
 }
 
+/// Type used to store elements in the "first pass".
 #[derive(Debug)]
 enum StoredObj<'a> {
     Relation(Cow<'a, OsmObj>, Vec<StoredObj<'a>>),
@@ -83,6 +116,9 @@ enum StoredObj<'a> {
     Node(Cow<'a, OsmObj>),
 }
 
+/// Database wrapper used to store the potential addresses. They are stored using the [`StoredObj`]
+/// enum. A buffer is used in order to not store everything on the disk.
+// TODO: maybe we should remove this buffer and directly use the SQLite cache?
 struct DBNodes {
     conn: Connection,
     buffer: HashMap<OsmId, OsmObj>,
@@ -299,6 +335,10 @@ impl Drop for DBNodes {
     }
 }
 
+/// Used in the "first pass" to generate the database fulfilled with all the potential addresses
+/// present in the PBF file.
+///
+/// To learn more about the filtering rules, please refer to the crate level documentation.
 fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
     let mut db_nodes = DBNodes::new("nodes.db", 1000).expect("failed to create DBNodes");
     {
@@ -334,6 +374,11 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
     db_nodes
 }
 
+/// Function to generate a position for a **way**. If the **way** is only composed of one **node**,
+/// it'll return the latitude and longitude of this **node**. If there is more than one, it'll first
+/// create a polygon and then get its centroid's latitude and longitude.
+///
+/// In case of error when generating the polygon, it'll return `None`.
 fn get_way_lat_lon(sub_objs: &[Cow<OsmObj>]) -> Option<(f64, f64)> {
     let nodes = sub_objs
         .iter()
@@ -361,6 +406,12 @@ fn get_way_lat_lon(sub_objs: &[Cow<OsmObj>]) -> Option<(f64, f64)> {
     None
 }
 
+/// Function used in the "first pass" by the [`iter_nodes`] function.
+///
+/// The goal here is to filter out all the elements that don't seem to be addresses and store the
+/// others into the provided `db` argument.
+///
+/// The conditions are explained at the crate level.
 fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
     match obj {
         StoredObj::Node(n) => match &*n {
@@ -405,10 +456,28 @@ fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
     }
 }
 
+/// This is the "first pass" function. It'll iterate through all objects of "interest" and store
+/// them in the provided `db`. Take a look at the crate documentation for more details (notably for
+/// how the filtering works).
 fn iter_nodes<T: CompatibleDB>(db_nodes: DBNodes, db: &mut T) {
     db_nodes.iter_objs(|obj| handle_obj(obj, db));
 }
 
+/// The entry point of the **OpenStreetMap** importer.
+///
+/// * The `pbf_file` argument is the location the file containing all the **OpenStreetMap** data.
+/// * The `db` argument is the mutable database wrapper implementing the `CompatibleDB` trait where
+///   the data will be stored.
+///
+/// Example:
+///
+/// ```no_run
+/// use tools::DB;
+/// use osm::import_addresses;
+///
+/// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+/// import_addresses("some_file.pbf", &mut db);
+/// ```
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(pbf_file: P, db: &mut T) {
     let count_before = db.get_nb_addresses();
 
