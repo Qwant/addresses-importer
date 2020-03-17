@@ -40,12 +40,16 @@ addresses(
 )
 ```
 
+If you want more information on the available options, use `-h` or `--help`:
+
+```bash
+cargo run --release -- -h
+```
 
 Duplicate criteria
 ------------------
 
-Two addresses are considered as duplicates if one of these two properties is
-true:
+Two addresses are considered duplicates if one of these two properties is true:
 
  - The distance between the two addresses is less than 100 meters and according
    to libpostal they have the same house number and are likely to be in the
