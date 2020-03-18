@@ -5,12 +5,14 @@ use std::str::FromStr;
 use csv::ReaderBuilder;
 use tools::{teprintln, tprintln, Address, CompatibleDB};
 
+/// Helper macro to convert a CSV field into a `String`.
 macro_rules! get {
     ($index:expr, $records:expr) => {
         $records.get($index)
     };
 }
 
+/// Helper macro to convert a CSV field into an `f64`.
 macro_rules! get_f64 {
     ($index:expr, $records:expr) => {
         match get!($index, $records).and_then(|x| f64::from_str(x).ok()) {
@@ -20,6 +22,21 @@ macro_rules! get_f64 {
     };
 }
 
+/// The entry point of the BANO importer.
+///
+/// * The `file_path` argument is where the BANO CSV file is located.
+/// * The `db` argument is the mutable database wrapper implementing the `CompatibleDB` trait where
+///   the data will be stored.
+///
+/// Example:
+///
+/// ```no_run
+/// use tools::DB;
+/// use bano::import_addresses;
+///
+/// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+/// import_addresses("somefile.csv", &mut db);
+/// ```
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(file_path: P, db: &mut T) {
     teprintln!("[BANO] Reading `{}`", file_path.as_ref().display());
     let count_before = db.get_nb_addresses();

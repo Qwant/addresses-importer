@@ -7,6 +7,10 @@ use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
 
 use serde::{Deserialize, Serialize};
 
+/// We store the CSV lines in this struct using `serde`. It allows to have
+/// very straightforward code. All the fields are representation of what can be
+/// encountered in **OpenAddresses** CSV files. If not, then the file is
+/// invalid.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct OpenAddress {
@@ -63,6 +67,8 @@ impl From<Address> for OpenAddress {
     }
 }
 
+/// This function is called on every CSV file encountered in the given folder tree in the
+/// `import_addresses` function. It simply reads it and fills the `db` object.
 fn read_csv<P: AsRef<Path>, T: CompatibleDB>(db: &mut T, file_path: P) {
     let file = File::open(&file_path).expect("cannot open file");
     let mut rdr = Reader::from_reader(file);
@@ -79,6 +85,25 @@ fn read_csv<P: AsRef<Path>, T: CompatibleDB>(db: &mut T, file_path: P) {
     }
 }
 
+/// The entry point of the **OpenAddresses** importer.
+///
+/// * The `base_path` argument is where the top folder containing the CSV files is located.
+/// * The `db` argument is the mutable database wrapper implementing the `CompatibleDB` trait where
+///   the data will be stored.
+///
+/// Considering it's calling the `read_csv` function on every CSV files it finds, it could be pretty
+/// simply run in parallel. It'd require `db` to be able to handle multi-threading though. To be
+/// done later I guess?
+///
+/// Example:
+///
+/// ```no_run
+/// use tools::DB;
+/// use openaddresses::import_addresses;
+///
+/// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
+/// import_addresses("some_folder", &mut db);
+/// ```
 pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(base_path: P, db: &mut T) {
     let count_before = db.get_nb_addresses();
     let mut count_after = count_before;
