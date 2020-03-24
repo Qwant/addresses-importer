@@ -15,19 +15,26 @@ use crate::db_hashes::{DbHashes, HashIterItem};
 use crate::dedupe::{hash_address, is_duplicate};
 use crate::utils::is_constraint_violation_error;
 
+/// Internal size of communication buffers between threads.
 const CHANNELS_SIZE: usize = 100_000;
 
+/// A datatastructure used to store and deduplicate inserted addresses.
 pub struct Deduplicator {
     db: DbHashes,
 }
 
 impl Deduplicator {
+    /// Init a new deduplicator from an SQLite path.
+    ///
+    /// If the file is not created yet or if the schema is not already set up, this will be done.
     pub fn new(output_path: PathBuf, cache_size: Option<u32>) -> rusqlite::Result<Self> {
         Ok(Self {
             db: DbHashes::new(output_path, cache_size)?,
         })
     }
 
+    /// Get an inserter for the database. This will materialize as a transaction that can be used
+    /// to efficiently insert data in the database.
     pub fn get_db_inserter<F, R>(
         &mut self,
         filter: F,
@@ -40,6 +47,8 @@ impl Deduplicator {
         Ok(DbInserter::new(&self.db, filter, ranking)?)
     }
 
+    /// Compute duplicate pairs inserted in the deduplicator. A set of addresses that need to be
+    /// deleted will be computed and inserted into the database.
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
         teprintln!("Build index on hashes");
         self.db.create_hashes_index()?;
@@ -69,7 +78,7 @@ impl Deduplicator {
         //            |
         //            |  (address, rank, hashes)
         //            v
-        // [    del_receiver    ] writer thread
+        // [    del_receiver    ] writer thread
 
         let nb_workers = max(3, num_cpus::get()) - 2;
         let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNELS_SIZE);
@@ -203,6 +212,8 @@ impl Deduplicator {
         Ok(())
     }
 
+    /// Delete the addresses that were marked to be deleted. Clean construction tables if
+    /// `keep_construction_tables` is set to false.
     pub fn apply_and_clean(&self, keep_construction_tables: bool) -> rusqlite::Result<()> {
         let count_to_delete = self.db.count_to_delete()?;
         teprint!("Deleting {} addresses ...\r", count_to_delete);
@@ -227,6 +238,7 @@ impl Deduplicator {
         Ok(())
     }
 
+    /// Dump addresses stored in the deduplicator into OpenAddresses's CSV format.
     pub fn openaddresses_dump<W: Write>(&self, mut stream: W) -> rusqlite::Result<()> {
         // Fetch addresses
         let conn = self.db.get_conn()?;
@@ -250,32 +262,27 @@ impl Deduplicator {
     }
 }
 
-//  ___                     _   _
-// |_ _|_ __  ___  ___ _ __| |_(_) ___  _ __
-//  | || '_ \/ __|/ _ \ '__| __| |/ _ \| '_ \
-//  | || | | \__ \  __/ |  | |_| | (_) | | | |
-// |___|_| |_|___/\___|_|   \__|_|\___/|_| |_|
-//
-//
-// Compute hashes in parallel using following pipeline:
-//
-// [     addr_sender      ] main thread
-//            |
-//            |  address
-//            v
-// [    addr_receiver     ]
-// [         |||          ] worker threads
-// [     hash_sender      ]
-//            |
-//            |  (address, rank, hashes)
-//            v
-// [     hash_receiver    ] writer thread
-
+/// Structure used to insert addresses into the deduplicator. This will instanciate workers to
+/// computed hashes efficiently and insert the address together with its hashes in the database
+/// using another separate.
 pub struct DbInserter<'db, F, R>
 where
     F: Fn(&Address) -> bool + Clone + Send + 'static,
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
+    // Compute hashes in parallel using following pipeline:
+    //
+    // [     addr_sender      ] main thread
+    //            |
+    //            |  address
+    //            v
+    // [    addr_receiver     ]
+    // [         |||          ] worker threads
+    // [     hash_sender      ]
+    //            |
+    //            |  (address, rank, hashes)
+    //            v
+    // [     hash_receiver    ] writer thread
     db: &'db DbHashes,
     addr_sender: Option<channel::Sender<Address>>,
     writer_thread: Option<thread::JoinHandle<()>>,
@@ -288,6 +295,13 @@ where
     F: Fn(&Address) -> bool + Clone + Send + 'static,
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
+    /// Instanciate a new inserter from a database.
+    ///
+    /// `filter` and `ranking` function are respectively used to filter addresses that will
+    /// actually be imported and computed the ranking associated with each addresses (if two
+    /// addresses are duplicates, the one with greater ranking is kept). Note that theses two
+    /// functions will be computed in a separate thread pool, thus they can be rather CPU intensive
+    /// if required.
     pub fn new(db: &'db DbHashes, filter: F, ranking: R) -> rusqlite::Result<Self> {
         let mut inserter = Self {
             db,
@@ -300,6 +314,8 @@ where
         Ok(inserter)
     }
 
+    /// Start a transaction to insert data. If a transaction is still running it will be commited
+    /// and then replaced.
     fn start_transaction(&mut self) -> rusqlite::Result<()> {
         // Ensure that previous transactions was commited and channels are empty.
         self.stop_transaction();
@@ -421,7 +437,7 @@ where
 
     fn insert(&mut self, addr: Address) {
         if addr.number.as_ref().map(|num| num == "S/N").unwrap_or(true) {
-            // house number is not specified
+            // House number is not specified.
             return;
         }
 

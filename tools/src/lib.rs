@@ -65,7 +65,7 @@ macro_rules! teprintln {
 
 /// A type representing an address. Only the `lat` and `lon` fields aren't optional because all the
 /// others might not be provided depending where we're getting the address from.
-#[derive(Clone, Debug, PartialOrd, PartialEq)]
+#[derive(Clone, Debug, Default, PartialOrd, PartialEq)]
 pub struct Address {
     pub lat: f64,
     pub lon: f64,

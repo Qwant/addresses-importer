@@ -4,6 +4,13 @@ version = "0.1.0"
 authors = ["Rémi Dupré <r.dupre@qwant.com>"]
 edition = "2018"
 
+[[bin]]
+name = "deduplicator"
+path = "src/bin/main.rs"
+
+[lib]
+path = "src/lib/mod.rs"
+
 [dependencies]
 crossbeam-channel = "0.4"
 csv = "1.1"
