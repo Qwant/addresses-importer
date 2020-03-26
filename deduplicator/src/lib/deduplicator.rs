@@ -212,28 +212,17 @@ impl Deduplicator {
         Ok(())
     }
 
-    /// Delete the addresses that were marked to be deleted. Clean construction tables if
-    /// `keep_construction_tables` is set to false.
-    pub fn apply_and_clean(&self, keep_construction_tables: bool) -> rusqlite::Result<()> {
+    /// Delete the addresses that were marked to be deleted.
+    pub fn apply_deletions(&self) -> rusqlite::Result<()> {
         let count_to_delete = self.db.count_to_delete()?;
         teprint!("Deleting {} addresses ...\r", count_to_delete);
 
         self.db.apply_addresses_to_delete()?;
-
-        let count_remain = self.db.count_addresses()?;
         teprintln!(
             "Deleting {} addresses ... {} remain",
             count_to_delete,
-            count_remain
+            self.db.count_addresses()?
         );
-
-        if !keep_construction_tables {
-            teprintln!("Cleaning database");
-            self.db.cleanup_database()?;
-
-            teprintln!("Vacuum database");
-            self.db.vacuum()?;
-        }
 
         Ok(())
     }
