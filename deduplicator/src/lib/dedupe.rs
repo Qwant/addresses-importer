@@ -16,13 +16,47 @@ use crate::utils::{field_compare, opt_field_compare, postal_repr};
 const GEOHASH_PRECISION: u32 = 5;
 
 lazy_static! {
+    /// LibPostal instance
     static ref POSTAL_CORE: rpostal::Core =
         rpostal::Core::setup().expect("failed to init libpostal core");
+
+    /// LibPostal classifier instance
     static ref POSTAL_CLASSIFIER: rpostal::LanguageClassifier<'static> = POSTAL_CORE
         .setup_language_classifier()
         .expect("failed to init libpostal classifier");
 }
 
+/// Return a sequence of hashes representing input address.
+///
+/// This hash function is built such that two addresses with both lexical and geographical
+/// proximity are in collision.
+///
+/// # Example
+/// ```
+/// use deduplicator::dedupe::*;
+/// use std::collections::HashSet;
+/// use tools::Address;
+///
+/// let addr_1 = Address {
+///     lat: 48.8707572,
+///     lon: 2.3047277,
+///     number: Some("32".to_string()),
+///     street: Some("av. des Champs Élysées".to_string()),
+///     ..Address::default()
+/// };
+///
+/// let addr_2 = Address {
+///     lat: 48.870,
+///     lon: 2.304,
+///     number: Some("32".to_string()),
+///     street: Some("avenue des champs élysées".to_string()),
+///     ..Address::default()
+/// };
+///
+/// let hashes_1: HashSet<_> = hash_address(&addr_1).collect();
+/// let hashes_2: HashSet<_> = hash_address(&addr_2).collect();
+/// assert_ne!(hashes_1.intersection(&hashes_2).count(), 0);
+/// ```
 pub fn hash_address(address: &Address) -> impl Iterator<Item = u64> {
     let options = rpostal::NearDupeHashOptions {
         // Only keep local keys (number / street), the geohash will filter distant addresses.
@@ -50,6 +84,47 @@ pub fn hash_address(address: &Address) -> impl Iterator<Item = u64> {
         })
 }
 
+/// Check if two addresses are considered to be duplicates.
+///
+/// Current criteria for addresses to be duplicates is as follows:
+///
+/// - The distance between the two addresses is less than 100 meters and according
+///   to libpostal and:
+///     - have the same house number
+///     - are likely to be in the same street (if there is less than 10 meters
+///       between the two addresses, libpostal is allowed to only output
+///       `PossibleDuplicate` for street name)
+///
+/// - According to libpostal, the two addresses have:
+///     - the same house number
+///     - the same street name
+///     - the same city name
+///     - the same postal code
+///     - they are distant of less than 1km
+///
+/// # Example
+/// ```
+/// use deduplicator::dedupe::*;
+/// use tools::Address;
+///
+/// let addr_1 = Address {
+///     lat: 48.8707572,
+///     lon: 2.3047277,
+///     number: Some("32".to_string()),
+///     street: Some("av. des Champs Élysées".to_string()),
+///     ..Address::default()
+/// };
+///
+/// let addr_2 = Address {
+///     lat: 48.870,
+///     lon: 2.304,
+///     number: Some("32".to_string()),
+///     street: Some("avenue des champs élysées".to_string()),
+///     ..Address::default()
+/// };
+///
+/// assert!(is_duplicate(&addr_1, &addr_2));
+/// ```
 pub fn is_duplicate(addr_1: &Address, addr_2: &Address) -> bool {
     use rpostal::DuplicateStatus::*;
     let def_opt = POSTAL_CLASSIFIER.get_default_duplicate_options();

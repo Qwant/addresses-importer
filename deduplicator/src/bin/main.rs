@@ -1,41 +1,11 @@
-extern crate crossbeam_channel;
-extern crate csv;
-extern crate geo;
-extern crate geo_geojson;
-extern crate importer_bano;
-extern crate importer_openaddresses;
-extern crate importer_osm;
-#[macro_use]
-extern crate tools;
-extern crate itertools;
-#[macro_use]
-extern crate lazy_static;
-extern crate libsqlite3_sys;
-extern crate num_cpus;
-extern crate prog_rs;
-extern crate rpostal;
-extern crate rusqlite;
-extern crate structopt;
-
-#[cfg(test)]
-mod tests;
-
-mod db_hashes;
-mod dedupe;
-mod deduplicator;
-mod sources;
-mod utils;
-
 use std::fs::File;
 use std::path::PathBuf;
 
 use libflate::gzip;
 use structopt::StructOpt;
-use tools::Address;
+use tools::{tprintln, Address};
 
-use deduplicator::Deduplicator;
-use sources::Source;
-use utils::load_from_sqlite;
+use deduplicator::{deduplicator::Deduplicator, sources::Source, utils::load_from_sqlite};
 
 #[derive(Debug, StructOpt)]
 #[structopt(
