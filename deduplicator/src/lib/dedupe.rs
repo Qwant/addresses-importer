@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use geo::prelude::*;
 use geo::Point;
+use once_cell::sync::Lazy;
 use rpostal;
 use tools::Address;
 
@@ -15,16 +16,16 @@ use crate::utils::{field_compare, opt_field_compare, postal_repr};
 /// https://en.wikipedia.org/wiki/Alert,_Nunavut).
 const GEOHASH_PRECISION: u32 = 5;
 
-lazy_static! {
-    /// LibPostal instance
-    static ref POSTAL_CORE: rpostal::Core =
-        rpostal::Core::setup().expect("failed to init libpostal core");
+/// LibPostal instance
+static POSTAL_CORE: Lazy<rpostal::Core> =
+    Lazy::new(|| rpostal::Core::setup().expect("failed to init libpostal core"));
 
-    /// LibPostal classifier instance
-    static ref POSTAL_CLASSIFIER: rpostal::LanguageClassifier<'static> = POSTAL_CORE
+/// LibPostal classifier instance
+static POSTAL_CLASSIFIER: Lazy<rpostal::LanguageClassifier<'static>> = Lazy::new(|| {
+    POSTAL_CORE
         .setup_language_classifier()
-        .expect("failed to init libpostal classifier");
-}
+        .expect("failed to init libpostal classifier")
+});
 
 /// Return a sequence of hashes representing input address.
 ///

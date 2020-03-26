@@ -2,21 +2,20 @@
 
 use geo::algorithm::contains::Contains;
 use geo::{MultiPolygon, Point};
+use once_cell::sync::Lazy;
 
 use tools::Address;
 
-lazy_static! {
-    static ref FRANCE_SHAPE: MultiPolygon<f64> = {
-        let collection = geo_geojson::from_str(include_str!("data/france.json"))
-            .expect("failed to parse shape for France");
-        collection
-            .into_iter()
-            .next()
-            .expect("found an empty collection for France")
-            .into_multi_polygon()
-            .expect("France should be a MultiPolygon")
-    };
-}
+static FRANCE_SHAPE: Lazy<MultiPolygon<f64>> = Lazy::new(|| {
+    let collection = geo_geojson::from_str(include_str!("data/france.json"))
+        .expect("failed to parse shape for France");
+    collection
+        .into_iter()
+        .next()
+        .expect("found an empty collection for France")
+        .into_multi_polygon()
+        .expect("France should be a MultiPolygon")
+});
 
 /// A source of addresses.
 #[derive(Clone, Copy, Debug)]
