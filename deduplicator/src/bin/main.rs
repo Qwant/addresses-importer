@@ -46,7 +46,11 @@ struct Params {
     keep: bool,
 
     /// Output database as an OpenAddress-like gzip CSV file
-    #[structopt(short, long, default_value = "deduplicated.csv.gz")]
+    #[structopt(
+        short,
+        long = "output-compressed-csv",
+        default_value = "deduplicated.csv.gz"
+    )]
     output_csv: PathBuf,
 
     /// Number of pages to be used by SQLite (one page is 4096 bytes)
