@@ -1,7 +1,5 @@
 //! Utilities to deduplicate pair of addresses inside of a large database.
 
-#[macro_use]
-extern crate lazy_static;
 extern crate crossbeam_channel;
 extern crate csv;
 extern crate geo;
@@ -14,6 +12,7 @@ extern crate tools;
 extern crate itertools;
 extern crate libsqlite3_sys;
 extern crate num_cpus;
+extern crate once_cell;
 extern crate prog_rs;
 extern crate rpostal;
 extern crate rusqlite;

@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{remove_file, File};
 use std::path::PathBuf;
 
 use libflate::gzip;
@@ -41,17 +41,17 @@ struct Params {
     #[structopt(long, default_value = "addresses.db")]
     output_db: PathBuf,
 
-    /// Keep construction tables in the output database
+    /// Keep construction tables and the output database
     #[structopt(short, long)]
     keep: bool,
 
-    /// Output database as an OpenAddress-like CSV file
-    #[structopt(long)]
-    output_csv: Option<PathBuf>,
-
     /// Output database as an OpenAddress-like gzip CSV file
-    #[structopt(short, long)]
-    output_compressed_csv: Option<PathBuf>,
+    #[structopt(
+        short,
+        long = "output-compressed-csv",
+        default_value = "deduplicated.csv.gz"
+    )]
+    output_csv: PathBuf,
 
     /// Number of pages to be used by SQLite (one page is 4096 bytes)
     #[structopt(short, long, default_value = "10000")]
@@ -87,7 +87,7 @@ fn main() -> rusqlite::Result<()> {
 
     // Load from all sources
 
-    let mut deduplication = Deduplicator::new(params.output_db, Some(params.cache_size))?;
+    let mut deduplication = Deduplicator::new(params.output_db.clone(), Some(params.cache_size))?;
 
     for (source, path) in db_sources {
         tprintln!("Loading {:?} addresses from database {:?}...", source, path);
@@ -120,22 +120,22 @@ fn main() -> rusqlite::Result<()> {
     deduplication.compute_duplicates()?;
 
     tprintln!("Cleaning...");
-    deduplication.apply_and_clean(params.keep)?;
+    deduplication.apply_deletions()?;
 
     // --- Dump CSV
 
-    if let Some(output_csv) = params.output_csv {
-        tprintln!("Write CSV...");
-        let file = File::create(output_csv).expect("failed to create dump file");
-        deduplication.openaddresses_dump(file)?;
-    }
+    tprintln!("Write compressed CSV...");
+    let file = File::create(params.output_csv).expect("failed to create dump file");
+    let mut encoder = gzip::Encoder::new(file).expect("failed to init gzip encoder");
+    deduplication.openaddresses_dump(&mut encoder)?;
+    encoder.finish().as_result().expect("failed to end dump");
 
-    if let Some(compressed_csv) = params.output_compressed_csv {
-        tprintln!("Write compressed CSV...");
-        let file = File::create(compressed_csv).expect("failed to create dump file");
-        let mut encoder = gzip::Encoder::new(file).expect("failed to init gzip encoder");
-        deduplication.openaddresses_dump(&mut encoder)?;
-        encoder.finish().as_result().expect("failed to end dump");
+    // --- Cleanup
+
+    if !&params.keep {
+        remove_file(&params.output_db)
+            .map_err(|_| eprintln!(r"/!\ failed to remove the working database file"))
+            .ok();
     }
 
     Ok(())
