@@ -3,7 +3,9 @@
 use std::borrow::Borrow;
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
+use std::num::ParseIntError;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::deduplicator::Deduplicator;
 
@@ -11,6 +13,20 @@ use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rusqlite::{Connection, NO_PARAMS};
 use tools::{Address, CompatibleDB};
+
+/// Parse a string into a duration from a number of milliseconds.
+///
+/// # Example
+///
+/// ```
+/// use deduplicator::utils::*;
+/// use std::time::Duration;
+///
+/// assert_eq!(parse_duration("1000"), Ok(Duration::from_secs(1)));
+/// ```
+pub fn parse_duration(raw: &str) -> Result<Duration, ParseIntError> {
+    Ok(Duration::from_millis(raw.parse()?))
+}
 
 /// Compare two elements wrapped into an option using provided comparison function. If at least one
 /// of the elements is `None`, this will return false.
@@ -138,6 +154,7 @@ pub fn load_from_sqlite<F, R>(
     path: PathBuf,
     filter: F,
     ranking: R,
+    refresh_delay: Duration,
 ) -> rusqlite::Result<()>
 where
     F: Fn(&Address) -> bool + Clone + Send + 'static,
@@ -156,6 +173,7 @@ where
     let addresses = stmt
         .query_map(NO_PARAMS, |row| row.try_into())?
         .progress()
+        .with_refresh_delay(refresh_delay)
         .with_iter_size(nb_addresses)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))
         .with_output_stream(prog_rs::OutputStream::StdErr)
