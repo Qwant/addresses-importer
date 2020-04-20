@@ -11,7 +11,7 @@ use tempdir::TempDir;
 use tools::Address;
 use tools::CompatibleDB;
 
-use crate::deduplicator::Deduplicator;
+use crate::deduplicator::{DedupeConfig, Deduplicator};
 
 const DB_NO_DUPES: &str = "data/tests/no_dupes.sql";
 const DB_WITH_DUPES: &str = "data/tests/with_dupes.sql";
@@ -74,7 +74,11 @@ fn database_complete() -> rusqlite::Result<()> {
 
     // Read input database
     let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
-    let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"), None)?;
+    let mut dedupe = Deduplicator::new(
+        tmp_dir.path().join("addresses.db"),
+        DedupeConfig::default(),
+        None,
+    )?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
     dedupe.apply_deletions()?;
@@ -95,7 +99,11 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
 
     // Read input database
     let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
-    let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"), None)?;
+    let mut dedupe = Deduplicator::new(
+        tmp_dir.path().join("addresses.db"),
+        DedupeConfig::default(),
+        None,
+    )?;
 
     // Insert all addresses 10 times
     for _ in 0..10 {
@@ -121,7 +129,11 @@ fn remove_close_duplicates() -> rusqlite::Result<()> {
 
     // Read input database
     let input_addresses = load_addresses_from_db(&load_dump(&DB_WITH_DUPES.into())?)?;
-    let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"), None)?;
+    let mut dedupe = Deduplicator::new(
+        tmp_dir.path().join("addresses.db"),
+        DedupeConfig::default(),
+        None,
+    )?;
     insert_addresses(&mut dedupe, input_addresses)?;
     dedupe.compute_duplicates()?;
     dedupe.apply_deletions()?;
@@ -141,7 +153,11 @@ fn csv_is_complete() -> rusqlite::Result<()> {
 
     // Read input database
     let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
-    let mut dedupe = Deduplicator::new(tmp_dir.path().join("addresses.db"), None)?;
+    let mut dedupe = Deduplicator::new(
+        tmp_dir.path().join("addresses.db"),
+        DedupeConfig::default(),
+        None,
+    )?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
 
     // Dump CSV

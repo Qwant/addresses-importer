@@ -24,6 +24,15 @@ pub struct DedupeConfig {
     pub nb_threads: usize,
 }
 
+impl Default for DedupeConfig {
+    fn default() -> Self {
+        Self {
+            refresh_delay: Duration::from_secs(1),
+            nb_threads: num_cpus::get(),
+        }
+    }
+}
+
 /// A datatastructure used to store and deduplicate inserted addresses.
 pub struct Deduplicator {
     db: DbHashes,
