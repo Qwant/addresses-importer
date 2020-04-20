@@ -3,6 +3,7 @@ use std::io::{stderr, Write};
 use std::mem::drop;
 use std::path::PathBuf;
 use std::thread;
+use std::time::Duration;
 
 use crossbeam_channel as channel;
 use importer_openaddresses::OpenAddress;
@@ -18,18 +19,29 @@ use crate::utils::is_constraint_violation_error;
 /// Internal size of communication buffers between threads.
 const CHANNELS_SIZE: usize = 100_000;
 
+pub struct DedupeConfig {
+    pub refresh_delay: Duration,
+    pub nb_threads: usize,
+}
+
 /// A datatastructure used to store and deduplicate inserted addresses.
 pub struct Deduplicator {
     db: DbHashes,
+    config: DedupeConfig,
 }
 
 impl Deduplicator {
     /// Init a new deduplicator from an SQLite path.
     ///
     /// If the file is not created yet or if the schema is not already set up, this will be done.
-    pub fn new(output_path: PathBuf, cache_size: Option<u32>) -> rusqlite::Result<Self> {
+    pub fn new(
+        output_path: PathBuf,
+        config: DedupeConfig,
+        cache_size: Option<u32>,
+    ) -> rusqlite::Result<Self> {
         Ok(Self {
             db: DbHashes::new(output_path, cache_size)?,
+            config,
         })
     }
 
@@ -44,7 +56,12 @@ impl Deduplicator {
         F: Fn(&Address) -> bool + Clone + Send + 'static,
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
     {
-        Ok(DbInserter::new(&self.db, filter, ranking)?)
+        Ok(DbInserter::new(
+            &self.db,
+            filter,
+            ranking,
+            self.config.nb_threads,
+        )?)
     }
 
     /// Compute duplicate pairs inserted in the deduplicator. A set of addresses that need to be
@@ -80,7 +97,7 @@ impl Deduplicator {
         //            v
         // [    del_receiver    ] writer thread
 
-        let nb_workers = max(3, num_cpus::get()) - 2;
+        let nb_workers = max(3, self.config.nb_threads) - 2;
         let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNELS_SIZE);
         let (del_sender, del_receiver) = channel::bounded(CHANNELS_SIZE);
 
@@ -186,6 +203,7 @@ impl Deduplicator {
         let conflicting_packs = sorted_hashes
             .iter()?
             .progress()
+            .with_refresh_delay(self.config.refresh_delay)
             .with_iter_size(count_hashes as usize)
             .with_prefix("Filter colisions")
             .with_output_stream(prog_rs::OutputStream::StdErr)
@@ -277,6 +295,7 @@ where
     writer_thread: Option<thread::JoinHandle<()>>,
     filter: F,
     ranking: R,
+    nb_threads: usize,
 }
 
 impl<'db, F, R> DbInserter<'db, F, R>
@@ -291,13 +310,19 @@ where
     /// addresses are duplicates, the one with greater ranking is kept). Note that theses two
     /// functions will be computed in a separate thread pool, thus they can be rather CPU intensive
     /// if required.
-    pub fn new(db: &'db DbHashes, filter: F, ranking: R) -> rusqlite::Result<Self> {
+    pub fn new(
+        db: &'db DbHashes,
+        filter: F,
+        ranking: R,
+        nb_threads: usize,
+    ) -> rusqlite::Result<Self> {
         let mut inserter = Self {
             db,
             addr_sender: None,
             writer_thread: None,
             filter,
             ranking,
+            nb_threads,
         };
         inserter.start_transaction()?;
         Ok(inserter)
@@ -311,7 +336,7 @@ where
 
         // --- Create new channels for new threads
 
-        let nb_workers = max(3, num_cpus::get()) - 2;
+        let nb_workers = max(3, self.nb_threads) - 2;
         let (addr_sender, addr_receiver) = channel::bounded(CHANNELS_SIZE);
         let (hash_sender, hash_receiver) = channel::bounded(CHANNELS_SIZE);
 

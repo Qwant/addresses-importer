@@ -1,11 +1,16 @@
 use std::fs::{remove_file, File};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use libflate::gzip;
 use structopt::StructOpt;
 use tools::{tprintln, Address};
 
-use deduplicator::{deduplicator::Deduplicator, sources::Source, utils::load_from_sqlite};
+use deduplicator::{
+    deduplicator::{DedupeConfig, Deduplicator},
+    sources::Source,
+    utils::{load_from_sqlite, parse_duration},
+};
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -56,6 +61,14 @@ struct Params {
     /// Number of pages to be used by SQLite (one page is 4096 bytes)
     #[structopt(short, long, default_value = "10000")]
     cache_size: u32,
+
+    /// Number of thread to target during the computation.
+    #[structopt(short, long)]
+    num_threads: Option<usize>,
+
+    /// Redraw delay for displayed progress (in ms)
+    #[structopt(long, default_value = "1000", parse(try_from_str = parse_duration))]
+    refresh_delay: Duration,
 }
 
 fn main() -> rusqlite::Result<()> {
@@ -87,7 +100,16 @@ fn main() -> rusqlite::Result<()> {
 
     // Load from all sources
 
-    let mut deduplication = Deduplicator::new(params.output_db.clone(), Some(params.cache_size))?;
+    let dedupe_config = DedupeConfig {
+        refresh_delay: params.refresh_delay,
+        nb_threads: params.num_threads.unwrap_or_else(num_cpus::get),
+    };
+
+    let mut deduplication = Deduplicator::new(
+        params.output_db.clone(),
+        dedupe_config,
+        Some(params.cache_size),
+    )?;
 
     for (source, path) in db_sources {
         tprintln!("Loading {:?} addresses from database {:?}...", source, path);
@@ -97,6 +119,7 @@ fn main() -> rusqlite::Result<()> {
             path,
             move |addr| source.filter(&addr),
             move |addr| source.ranking(&addr),
+            params.refresh_delay,
         )?;
     }
 
