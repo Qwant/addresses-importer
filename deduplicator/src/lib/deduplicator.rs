@@ -90,7 +90,7 @@ impl Deduplicator {
         );
 
         let conn_get_collisions = self.db.get_conn()?;
-        let mut sorted_hashes = DbHashes::get_sorted_hashes(&conn_get_collisions)?;
+        let mut sorted_hashes = DbHashes::get_collisions_iter(&conn_get_collisions)?;
 
         // Eliminate false positives in parallel using following pipeline:
         //
@@ -209,11 +209,12 @@ impl Deduplicator {
         // --- Send conflicting pairs into channels
 
         // Pack conflicting items together
+        let count_collisions = self.db.count_collisions()? as usize;
         let conflicting_packs = sorted_hashes
             .iter()?
             .progress()
             .with_refresh_delay(self.config.refresh_delay)
-            .with_iter_size(count_hashes as usize)
+            .with_iter_size(count_collisions)
             .with_prefix("Filter colisions")
             .with_output_stream(prog_rs::OutputStream::StdErr)
             .filter_map(|item| {

@@ -189,6 +189,34 @@ impl DbHashes {
         )
     }
 
+    /// Count the number of pairs (address, hash) that are in collision with another.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use deduplicator::db_hashes::*;
+    ///
+    /// let db = DbHashes::new("sqlite.db".into(), None).unwrap();
+    /// assert_eq!(db.count_collisions(), Ok(0));
+    /// ```
+    pub fn count_collisions(&self) -> rusqlite::Result<i64> {
+        self.get_conn()?.query_row(
+            &format!(
+                "
+                    SELECT SUM(count)
+                    FROM (
+                        SELECT COUNT(*) AS count
+                        FROM {}
+                        GROUP BY hash
+                        HAVING count > 1
+                    );
+                ",
+                TABLE_HASHES
+            ),
+            NO_PARAMS,
+            |row: &rusqlite::Row| row.get(0),
+        )
+    }
+
     /// Get an inserter for the database. This will materialize as a transaction that can be used
     /// to efficiently insert data in the database.
     ///
@@ -248,8 +276,8 @@ impl DbHashes {
         AddressesIter::prepare(conn)
     }
 
-    /// Get an iterable over hashes in the database. The results are ordered by hash value, which
-    /// is convenient to detect collisions.
+    /// Get an iterable over hashes in the database that explicit a collision. The results are
+    /// grouped by hash value.
     ///
     /// # Example
     /// ```no_run
@@ -261,15 +289,15 @@ impl DbHashes {
     /// let db = DbHashes::new("sqlite.db".into(), None).unwrap();
     /// let mut conn = db.get_conn().unwrap();
     ///
-    /// let hashes: Vec<_> = DbHashes::get_sorted_hashes(&conn)
+    /// let hashes: Vec<_> = DbHashes::get_collisions_iter(&conn)
     ///     .unwrap()
     ///     .iter()
     ///     .unwrap()
     ///     .map(|item| item.unwrap())
     ///     .collect();
     /// ```
-    pub fn get_sorted_hashes<'c>(conn: &'c Connection) -> rusqlite::Result<SortedHashesIter<'c>> {
-        SortedHashesIter::prepare(conn)
+    pub fn get_collisions_iter<'c>(conn: &'c Connection) -> rusqlite::Result<CollisionsIter<'c>> {
+        CollisionsIter::prepare(conn)
     }
 
     /// Apply deletions of addresses listed in the table of addresses that have to be deleted.
@@ -413,12 +441,13 @@ pub struct HashIterItem {
     pub rank: f64,
 }
 
-/// An iterable over addresses sorted by hash value in the database. Note that as an address may
-/// have several hash values, it may appear several time (with a separate hash value) in the
-/// iterations.
-pub struct SortedHashesIter<'c>(Statement<'c>);
+/// An iterable over addresses sorted by hash value in the database.
+///
+/// Note that as an address may have several hash values, it may appear several time (with a
+/// separate hash value) in the iterations.
+pub struct CollisionsIter<'c>(Statement<'c>);
 
-impl<'c> SortedHashesIter<'c> {
+impl<'c> CollisionsIter<'c> {
     /// Request the list of addresses ordered by hashes to a connection.
     pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
         Ok(Self(conn.prepare(&format!(
@@ -436,9 +465,9 @@ impl<'c> SortedHashesIter<'c> {
                     addr.postcode   AS postcode,
                     addr.rank       AS rank,
                     hash.hash       AS hash
-                FROM  {hashes}   AS hash
-                JOIN {addresses} AS addr
-                    ON hash.address = addr.id
+                FROM {hashes} AS hash
+                JOIN {addresses} AS addr ON hash.address = addr.id
+                WHERE EXISTS (SELECT * FROM {hashes} WHERE hash = hash.hash AND address <> hash.address)
                 ORDER BY hash.hash;
             ",
             addresses = TABLE_ADDRESSES,
