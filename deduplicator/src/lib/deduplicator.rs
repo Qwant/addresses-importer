@@ -302,7 +302,8 @@ where
     // [     hash_receiver    ] writer thread
     db: &'db DbHashes,
     addr_sender: Option<channel::Sender<Address>>,
-    writer_thread: Option<thread::JoinHandle<()>>,
+    writer_thread: Option<thread::JoinHandle<i64>>,
+    count_addresses: i64,
     filter: F,
     ranking: R,
     nb_threads: usize,
@@ -330,6 +331,7 @@ where
             db,
             addr_sender: None,
             writer_thread: None,
+            count_addresses: db.count_addresses()?,
             filter,
             ranking,
             nb_threads,
@@ -382,12 +384,15 @@ where
             let mut tran = conn.transaction().expect("failed to init transaction");
             tran.set_drop_behavior(DropBehavior::Commit);
             let mut inserter = DbHashes::get_inserter(&mut tran).expect("failed to init inserter");
+            let mut count_new_addresses = 0;
 
             for (address, rank, hashes) in hash_receiver {
                 let addr_id = inserter.insert_address(&address, rank);
 
                 match addr_id {
                     Ok(addr_id) => {
+                        count_new_addresses += 1;
+
                         for hash in hashes {
                             inserter
                                 .insert_hash(addr_id, hash as i64)
@@ -399,12 +404,12 @@ where
                                 .ok();
                         }
                     }
-                    Err(err) if !is_constraint_violation_error(&err) => {
-                        teprintln!("Failed inserting address: {}", err);
-                    }
-                    _ => (),
+                    Err(err) if is_constraint_violation_error(&err) => {}
+                    Err(err) => teprintln!("Failed inserting address: {}", err),
                 }
             }
+
+            count_new_addresses
         }));
 
         self.addr_sender = Some(addr_sender);
@@ -413,14 +418,13 @@ where
 
     /// Commit and stop transaction, this means that you can't call `self.insert` until
     /// `self.start_transaction` is called.
-    fn stop_transaction(&mut self) {
+    fn stop_transaction(&mut self) -> Option<i64> {
         // Close sender channel, this will end writer threads
         self.addr_sender = None;
 
         // Wait for writer thread to finish writing if any
-        if let Some(writer_thread) = std::mem::replace(&mut self.writer_thread, None) {
-            writer_thread.join().expect("failed to join writer thread");
-        }
+        std::mem::replace(&mut self.writer_thread, None)
+            .map(|writer_thread| writer_thread.join().expect("failed to join writer thread"))
     }
 
     /// By default DbInserter applies all its actions in a single transaction handled by the worker
@@ -433,10 +437,15 @@ where
     where
         A: FnOnce(&DbHashes) -> rusqlite::Result<T>,
     {
-        self.stop_transaction();
+        self.count_addresses += self.stop_transaction().unwrap_or(0);
         let result = action(self.db);
         self.start_transaction()?;
         result
+    }
+
+    // Wait for all threads to finish (like `borrow_db`, but without performing an action).
+    fn flush(&mut self) -> rusqlite::Result<()> {
+        self.borrow_db(|_| Ok(()))
     }
 }
 
@@ -446,7 +455,7 @@ where
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
     fn drop(&mut self) {
-        self.stop_transaction()
+        self.stop_transaction();
     }
 }
 
@@ -455,10 +464,6 @@ where
     F: Fn(&Address) -> bool + Clone + Send + 'static,
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
-    fn flush(&mut self) {
-        // Flush doesn't realy make sense while the database is locked.
-    }
-
     fn insert(&mut self, addr: Address) {
         if addr.number.as_ref().map(|num| num == "S/N").unwrap_or(true) {
             // House number is not specified.
@@ -479,9 +484,9 @@ where
     }
 
     fn get_nb_addresses(&mut self) -> i64 {
-        self.borrow_db(|db| db.count_addresses())
-            .map_err(|err| eprintln!("Failed counting addresses: '{}'", err))
-            .unwrap_or(0)
+        self.flush()
+            .expect("failed flushing before counting addresses");
+        self.count_addresses
     }
 
     fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address> {
