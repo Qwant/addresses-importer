@@ -29,7 +29,7 @@ libflate = "0.1"
 libsqlite3-sys = "0.17"
 num_cpus = "1.12"
 once_cell = "1.3.1"
-prog_rs = "0.1"
+prog_rs = "0.2"
 rpostal = { git = "https://github.com/GuillaumeGomez/libpostal-rs.git" }
 rusqlite = "0.21"
 structopt = { version = "0.3", default-features = false }

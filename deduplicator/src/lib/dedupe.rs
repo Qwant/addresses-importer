@@ -4,7 +4,6 @@ use std::hash::{Hash, Hasher};
 use geo::prelude::*;
 use geo::Point;
 use once_cell::sync::Lazy;
-use rpostal;
 use tools::Address;
 
 use crate::utils::{field_compare, opt_field_compare, postal_repr};

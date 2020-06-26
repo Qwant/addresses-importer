@@ -1,7 +1,7 @@
 //! Generic utilities.
 
 use std::borrow::Borrow;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::ffi::CString;
 use std::num::ParseIntError;
 use std::path::PathBuf;
@@ -161,12 +161,6 @@ where
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
     let input_conn = Connection::open(&path)?;
-    let nb_addresses = usize::try_from(input_conn.query_row(
-        "SELECT COUNT(*) FROM addresses;",
-        NO_PARAMS,
-        |row| row.get(0).map(|x: isize| x),
-    )?)
-    .expect("failed to count number of addresses");
 
     // Query list of addresses
     let mut stmt = input_conn.prepare("SELECT * FROM addresses;")?;
@@ -174,7 +168,6 @@ where
         .query_map(NO_PARAMS, |row| row.try_into())?
         .progress()
         .with_refresh_delay(refresh_delay)
-        .with_iter_size(nb_addresses)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))
         .with_output_stream(prog_rs::OutputStream::StdErr)
         .filter_map(|addr| {
