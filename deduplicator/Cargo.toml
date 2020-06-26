@@ -11,6 +11,10 @@ path = "src/bin/main.rs"
 [lib]
 path = "src/lib/mod.rs"
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 [dependencies]
 crossbeam-channel = "0.4"
 csv = "1.1"

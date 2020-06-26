@@ -210,11 +210,7 @@ impl DB {
             db_buffer_size,
         })
     }
-}
 
-/// A trait used by importers. If you want to use another type than `DB`, you'll have to implement
-/// this trait on it.
-pub trait CompatibleDB {
     /// Flushes all on-hold data.
     ///
     /// Example:
@@ -236,7 +232,90 @@ pub trait CompatibleDB {
     /// });
     /// db.flush();
     /// ```
-    fn flush(&mut self);
+    pub fn flush(&mut self) {
+        let mut tx = self.conn.transaction().expect("failed to open transaction");
+        tx.set_drop_behavior(DropBehavior::Ignore);
+
+        let mut errors = {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO addresses(
+                    lat,
+                    lon,
+                    number,
+                    street,
+                    unit,
+                    city,
+                    district,
+                    region,
+                    postcode
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                )
+                .expect("failed to prepare statement");
+
+            self.buffer
+                .drain(..)
+                .filter_map(|obj| {
+                    if let Err(e) = stmt.execute(&[
+                        &obj.lat as &dyn ToSql,
+                        &obj.lon,
+                        &obj.number,
+                        &obj.street,
+                        &obj.unit,
+                        &obj.city,
+                        &obj.district,
+                        &obj.region,
+                        &obj.postcode,
+                    ]) {
+                        Some((obj, e.to_string()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        if !errors.is_empty() {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO addresses_errors(
+                    lat,
+                    lon,
+                    number,
+                    street,
+                    unit,
+                    city,
+                    district,
+                    region,
+                    postcode,
+                    kind
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )
+                .expect("failed to prepare error statement");
+
+            for (obj, err) in errors.drain(..) {
+                stmt.execute(&[
+                    &obj.lat as &dyn ToSql,
+                    &obj.lon,
+                    &obj.number,
+                    &obj.street,
+                    &obj.unit,
+                    &obj.city,
+                    &obj.district,
+                    &obj.region,
+                    &obj.postcode,
+                    &err,
+                ])
+                .expect("failed to insert into errors");
+            }
+        }
+
+        tx.commit().expect("commit failed");
+    }
+}
+
+/// A trait used by importers. If you want to use another type than `DB`, you'll have to implement
+/// this trait on it.
+pub trait CompatibleDB {
     /// Inserts a new address.
     ///
     /// Example:
@@ -390,86 +469,6 @@ pub trait CompatibleDB {
 }
 
 impl CompatibleDB for DB {
-    fn flush(&mut self) {
-        let mut tx = self.conn.transaction().expect("failed to open transaction");
-        tx.set_drop_behavior(DropBehavior::Ignore);
-
-        let mut errors = {
-            let mut stmt = tx
-                .prepare(
-                    "INSERT INTO addresses(
-                    lat,
-                    lon,
-                    number,
-                    street,
-                    unit,
-                    city,
-                    district,
-                    region,
-                    postcode
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                )
-                .expect("failed to prepare statement");
-
-            self.buffer
-                .drain(..)
-                .filter_map(|obj| {
-                    if let Err(e) = stmt.execute(&[
-                        &obj.lat as &dyn ToSql,
-                        &obj.lon,
-                        &obj.number,
-                        &obj.street,
-                        &obj.unit,
-                        &obj.city,
-                        &obj.district,
-                        &obj.region,
-                        &obj.postcode,
-                    ]) {
-                        Some((obj, e.to_string()))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-        if !errors.is_empty() {
-            let mut stmt = tx
-                .prepare(
-                    "INSERT INTO addresses_errors(
-                    lat,
-                    lon,
-                    number,
-                    street,
-                    unit,
-                    city,
-                    district,
-                    region,
-                    postcode,
-                    kind
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                )
-                .expect("failed to prepare error statement");
-
-            for (obj, err) in errors.drain(..) {
-                stmt.execute(&[
-                    &obj.lat as &dyn ToSql,
-                    &obj.lon,
-                    &obj.number,
-                    &obj.street,
-                    &obj.unit,
-                    &obj.city,
-                    &obj.district,
-                    &obj.region,
-                    &obj.postcode,
-                    &err,
-                ])
-                .expect("failed to insert into errors");
-            }
-        }
-
-        tx.commit().expect("commit failed");
-    }
-
     fn insert(&mut self, addr: Address) {
         if addr.street.is_none() || addr.number.is_none() {
             return;
