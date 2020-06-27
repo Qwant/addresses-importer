@@ -12,6 +12,7 @@ use crate::deduplicator::Deduplicator;
 
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
+use rpostal::DuplicateStatus;
 use rusqlite::{Connection, NO_PARAMS};
 use tools::{Address, CompatibleDB};
 
@@ -57,58 +58,76 @@ pub fn parse_duration(raw: &str) -> Result<Duration, ParseIntError> {
     Ok(Duration::from_millis(raw.parse()?))
 }
 
-/// Compare two elements wrapped into an option using provided comparison function. If at least one
-/// of the elements is `None`, this will return false.
+/// Compare two `DuplicateStatus` wrapped into an option using provided comparison function. If at
+/// least one of the elements is `None`, this will return `DuplicateStatus::NonDuplicate`.
 ///
 /// # Example
 /// ```
 /// use deduplicator::utils::*;
+/// use rpostal::DuplicateStatus;
 ///
-/// let same_sign = |x: &i64, y: &i64| (*x < 0) == (*y < 0);
+/// let cmp = |x: &f64, y: &f64| {
+///     if x == y {
+///         DuplicateStatus::ExactDuplicate
+///     } else if f64::abs(x - y) <= 0.1 {
+///         DuplicateStatus::LikelyDuplicate
+///     } else {
+///         DuplicateStatus::NonDuplicate
+///     }
+/// };
 ///
-/// assert!(field_compare(Some(3), Some(42), same_sign));
-/// assert!(field_compare(Some(-1), Some(-10), same_sign));
-///
-/// assert!(!field_compare(Some(-1), Some(1), same_sign));
-/// assert!(!field_compare(None, Some(0), same_sign));
-/// assert!(!field_compare(None, None, same_sign));
+/// assert_eq!(field_compare(Some(1.), Some(1.), cmp), DuplicateStatus::ExactDuplicate);
+/// assert_eq!(field_compare(Some(-1.), Some(-1.05), cmp), DuplicateStatus::LikelyDuplicate);
+/// assert_eq!(field_compare(Some(-1.), Some(1.), cmp), DuplicateStatus::NonDuplicate);
+/// assert_eq!(field_compare(None, Some(0.), cmp), DuplicateStatus::NonDuplicate);
+/// assert_eq!(field_compare(None, None, cmp), DuplicateStatus::NonDuplicate);
 /// ```
 pub fn field_compare<T>(
     field1: impl Borrow<Option<T>>,
     field2: impl Borrow<Option<T>>,
-    compare: impl Fn(&T, &T) -> bool,
-) -> bool {
+    compare: impl Fn(&T, &T) -> DuplicateStatus,
+) -> DuplicateStatus {
     match (field1.borrow().as_ref(), field2.borrow().as_ref()) {
         (Some(field1), Some(field2)) => compare(field1, field2),
-        _ => false,
+        _ => DuplicateStatus::NonDuplicate,
     }
 }
 
-/// Compare two elements wrapped into an option using provided comparison function. If one of the
-/// elements is `None` and the other is not, this will return false.
+/// Compare two `DuplicateStatus` wrapped into an option using provided comparison function. If one
+/// of the elements is `None` and the other is not, this will return
+/// `DuplicateStatus::NonDuplicate`, if they are both `None` this will return
+/// `DuplicateStatus::ExactDuplicate`.
 ///
 /// # Example
 /// ```
 /// use deduplicator::utils::*;
+/// use rpostal::DuplicateStatus;
 ///
-/// let same_sign = |x: &i64, y: &i64| (*x < 0) == (*y < 0);
+/// let cmp = |x: &f64, y: &f64| {
+///     if x == y {
+///         DuplicateStatus::ExactDuplicate
+///     } else if f64::abs(x - y) <= 0.1 {
+///         DuplicateStatus::LikelyDuplicate
+///     } else {
+///         DuplicateStatus::NonDuplicate
+///     }
+/// };
 ///
-/// assert!(opt_field_compare(Some(3), Some(42), same_sign));
-/// assert!(opt_field_compare(Some(-1), Some(-10), same_sign));
-/// assert!(opt_field_compare(None, None, same_sign));
-///
-/// assert!(!opt_field_compare(Some(-1), Some(1), same_sign));
-/// assert!(!opt_field_compare(None, Some(0), same_sign));
+/// assert_eq!(opt_field_compare(Some(1.), Some(1.), cmp), DuplicateStatus::ExactDuplicate);
+/// assert_eq!(opt_field_compare(Some(-1.), Some(-1.05), cmp), DuplicateStatus::LikelyDuplicate);
+/// assert_eq!(opt_field_compare(Some(-1.), Some(1.), cmp), DuplicateStatus::NonDuplicate);
+/// assert_eq!(opt_field_compare(None, Some(0.), cmp), DuplicateStatus::NonDuplicate);
+/// assert_eq!(opt_field_compare(None, None, cmp), DuplicateStatus::ExactDuplicate);
 /// ```
 pub fn opt_field_compare<T>(
     field1: impl Borrow<Option<T>>,
     field2: impl Borrow<Option<T>>,
-    compare: impl Fn(&T, &T) -> bool,
-) -> bool {
+    compare: impl Fn(&T, &T) -> DuplicateStatus,
+) -> DuplicateStatus {
     match (field1.borrow().as_ref(), field2.borrow().as_ref()) {
-        (None, None) => true,
         (Some(field1), Some(field2)) => compare(field1, field2),
-        _ => false,
+        (None, None) => DuplicateStatus::ExactDuplicate,
+        _ => DuplicateStatus::NonDuplicate,
     }
 }
 
