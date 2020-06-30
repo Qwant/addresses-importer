@@ -24,21 +24,23 @@ use tools::{Address, CompatibleDB};
 ///
 /// assert_eq!(partition(0..=99, 2).collect::<Vec<_>>(), vec![0..=49, 50..=99]);
 /// ```
+#[allow(clippy::range_minus_one)]
 pub fn partition(
     range: RangeInclusive<i64>,
     nb_parts: usize,
 ) -> impl Iterator<Item = RangeInclusive<i64>> {
     let min = i128::from(*range.start());
-    let max = i128::from(*range.end()) + 1i128;
+    let max = i128::from(*range.end()) + 1;
     let nb_parts = i128::try_from(nb_parts).expect("overflow when computing partitions");
 
-    let bounds = (0..=nb_parts).map(move |part| min + part * (max - min) / nb_parts);
+    let bounds = (0..=nb_parts)
+        .map(move |part| min + part * (max - min) / nb_parts)
+        .map(|bound| bound.try_into().expect("bounds should fit in i64"));
 
-    bounds.clone().zip(bounds.skip(1)).map(|(start, end)| {
-        let start: i64 = start.try_into().expect("math error in partition");
-        let end: i64 = end.try_into().expect("math error in partition");
-        start..=(end - 1)
-    })
+    bounds
+        .clone()
+        .zip(bounds.skip(1))
+        .map(|(start, end)| start..=(end - 1))
 }
 
 /// Parse a string into a duration from a number of milliseconds.

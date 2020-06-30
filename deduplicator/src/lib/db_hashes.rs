@@ -459,7 +459,6 @@ pub struct CollisionsIter<'c>(Statement<'c>);
 impl<'c> CollisionsIter<'c> {
     /// Request the list of addresses ordered by hashes to a connection.
     pub fn prepare(conn: &'c Connection, part: usize, nb_parts: usize) -> rusqlite::Result<Self> {
-        assert_ne!(nb_parts, 0);
         assert!(part < nb_parts);
 
         // Precompute bounds.
@@ -470,17 +469,19 @@ impl<'c> CollisionsIter<'c> {
             .query_row(
                 &format!("SELECT MIN(hash) FROM {};", TABLE_HASHES),
                 NO_PARAMS,
-                |row: &rusqlite::Row| row.get::<_, i64>(0),
-            )?
-            .into();
+                |row: &rusqlite::Row| row.get(0),
+            )
+            .map_err(|err| teprintln!("[WARN] Could not read min hash value: `{}`", err))
+            .unwrap_or(i64::MIN);
 
         let max_hash = conn
             .query_row(
                 &format!("SELECT MAX(hash) FROM {};", TABLE_HASHES),
                 NO_PARAMS,
-                |row: &rusqlite::Row| row.get::<_, i64>(0),
-            )?
-            .into();
+                |row: &rusqlite::Row| row.get(0),
+            )
+            .map_err(|err| teprintln!("[WARN] Could not read max hash value: `{}`", err))
+            .unwrap_or(i64::MAX);
 
         let part = partition(min_hash..=max_hash, nb_parts)
             .nth(part)
