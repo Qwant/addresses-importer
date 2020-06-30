@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
 use tools::Address;
 
+use crate::utils::partition;
+
 /// Name of the table containing addresses.
 const TABLE_ADDRESSES: &str = "addresses";
 
@@ -464,10 +466,7 @@ impl<'c> CollisionsIter<'c> {
         // Note that these computations could be done by SQLite, however the query planner will
         // somehow forget that hashes are already sorted when we do so, resulting in computing an
         // unnecessary temporary B-Tree.
-        let part: i128 = part.try_into().expect("overflow for `part`");
-        let nb_parts: i128 = nb_parts.try_into().expect("overflow for `nb_parts`");
-
-        let min_hash: i128 = conn
+        let min_hash = conn
             .query_row(
                 &format!("SELECT MIN(hash) FROM {};", TABLE_HASHES),
                 NO_PARAMS,
@@ -475,7 +474,7 @@ impl<'c> CollisionsIter<'c> {
             )?
             .into();
 
-        let max_hash: i128 = conn
+        let max_hash = conn
             .query_row(
                 &format!("SELECT MAX(hash) FROM {};", TABLE_HASHES),
                 NO_PARAMS,
@@ -483,8 +482,9 @@ impl<'c> CollisionsIter<'c> {
             )?
             .into();
 
-        let start = min_hash + part * (1 + max_hash - min_hash) / nb_parts;
-        let end = min_hash + (1 + part) * (1 + max_hash - min_hash) / nb_parts;
+        let part = partition(min_hash..=max_hash, nb_parts)
+            .nth(part)
+            .expect("invalid partitionning");
 
         // Send the query
         let query = format!(
@@ -514,8 +514,8 @@ impl<'c> CollisionsIter<'c> {
                 )
                 ORDER BY hash.hash;
             ",
-            start = start,
-            end = end - 1,
+            start = part.start(),
+            end = part.end(),
             addresses = TABLE_ADDRESSES,
             hashes = TABLE_HASHES
         );

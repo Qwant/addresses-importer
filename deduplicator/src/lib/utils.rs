@@ -1,9 +1,10 @@
 //! Generic utilities.
 
 use std::borrow::Borrow;
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::num::ParseIntError;
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -13,6 +14,32 @@ use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rusqlite::{Connection, NO_PARAMS};
 use tools::{Address, CompatibleDB};
+
+/// Partition a range into several distinct partitions, given by increasing value.
+///
+/// # Example
+///
+/// ```
+/// use deduplicator::utils::partition;
+///
+/// assert_eq!(partition(0..=99, 2).collect::<Vec<_>>(), vec![0..=49, 50..=99]);
+/// ```
+pub fn partition(
+    range: RangeInclusive<i64>,
+    nb_parts: usize,
+) -> impl Iterator<Item = RangeInclusive<i64>> {
+    let min = i128::from(*range.start());
+    let max = i128::from(*range.end()) + 1i128;
+    let nb_parts = i128::try_from(nb_parts).expect("overflow when computing partitions");
+
+    let bounds = (0..=nb_parts).map(move |part| min + part * (max - min) / nb_parts);
+
+    bounds.clone().zip(bounds.skip(1)).map(|(start, end)| {
+        let start: i64 = start.try_into().expect("math error in partition");
+        let end: i64 = end.try_into().expect("math error in partition");
+        start..=(end - 1)
+    })
+}
 
 /// Parse a string into a duration from a number of milliseconds.
 ///
