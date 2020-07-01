@@ -188,7 +188,7 @@ impl Deduplicator {
         // speed.
         let mut progress = StepProgress::new()
             .with_refresh_delay(self.config.refresh_delay)
-            .with_prefix("Filter colisions")
+            .with_prefix("Filter collisions")
             .with_output_stream(prog_rs::OutputStream::StdErr);
 
         let count_addresses_before = self.db.count_addresses()?;
