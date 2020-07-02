@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
 use tools::Address;
 
+use crate::utils::partition;
+
 /// Name of the table containing addresses.
 const TABLE_ADDRESSES: &str = "addresses";
 
@@ -279,6 +281,9 @@ impl DbHashes {
     /// Get an iterable over hashes in the database that explicit a collision. The results are
     /// grouped by hash value.
     ///
+    /// The result is partitioned into `nb_parts` partitions, the returned iterator will only
+    /// browse results of the partition of index `part` (0 <= `part` < `nb_parts`).
+    ///
     /// # Example
     /// ```no_run
     /// use tools::Address;
@@ -289,15 +294,19 @@ impl DbHashes {
     /// let db = DbHashes::new("sqlite.db".into(), None).unwrap();
     /// let mut conn = db.get_conn().unwrap();
     ///
-    /// let hashes: Vec<_> = DbHashes::get_collisions_iter(&conn)
+    /// let hashes: Vec<_> = DbHashes::get_collisions_iter_for_parts(&conn, 0, 1)
     ///     .unwrap()
     ///     .iter()
     ///     .unwrap()
     ///     .map(|item| item.unwrap())
     ///     .collect();
     /// ```
-    pub fn get_collisions_iter<'c>(conn: &'c Connection) -> rusqlite::Result<CollisionsIter<'c>> {
-        CollisionsIter::prepare(conn)
+    pub fn get_collisions_iter_for_parts<'c>(
+        conn: &'c Connection,
+        part: usize,
+        nb_parts: usize,
+    ) -> rusqlite::Result<CollisionsIter<'c>> {
+        CollisionsIter::prepare(conn, part, nb_parts)
     }
 
     /// Apply deletions of addresses listed in the table of addresses that have to be deleted.
@@ -449,8 +458,37 @@ pub struct CollisionsIter<'c>(Statement<'c>);
 
 impl<'c> CollisionsIter<'c> {
     /// Request the list of addresses ordered by hashes to a connection.
-    pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
-        Ok(Self(conn.prepare(&format!(
+    pub fn prepare(conn: &'c Connection, part: usize, nb_parts: usize) -> rusqlite::Result<Self> {
+        assert!(part < nb_parts);
+
+        // Precompute bounds.
+        // Note that these computations could be done by SQLite, however the query planner will
+        // somehow forget that hashes are already sorted when we do so, resulting in computing an
+        // unnecessary temporary B-Tree.
+        let min_hash = conn
+            .query_row(
+                &format!("SELECT MIN(hash) FROM {};", TABLE_HASHES),
+                NO_PARAMS,
+                |row: &rusqlite::Row| row.get(0),
+            )
+            .map_err(|err| teprintln!("[WARN] Could not read min hash value: `{}`", err))
+            .unwrap_or(i64::MIN);
+
+        let max_hash = conn
+            .query_row(
+                &format!("SELECT MAX(hash) FROM {};", TABLE_HASHES),
+                NO_PARAMS,
+                |row: &rusqlite::Row| row.get(0),
+            )
+            .map_err(|err| teprintln!("[WARN] Could not read max hash value: `{}`", err))
+            .unwrap_or(i64::MAX);
+
+        let part = partition(min_hash..=max_hash, nb_parts)
+            .nth(part)
+            .expect("invalid partitionning");
+
+        // Send the query
+        let query = format!(
             "
                 SELECT
                     addr.id         AS id,
@@ -467,12 +505,23 @@ impl<'c> CollisionsIter<'c> {
                     hash.hash       AS hash
                 FROM {hashes} AS hash
                 JOIN {addresses} AS addr ON hash.address = addr.id
-                WHERE EXISTS (SELECT * FROM {hashes} WHERE hash = hash.hash AND address <> hash.address)
+                WHERE (
+                    hash.hash BETWEEN {start} AND {end}
+                    AND EXISTS (
+                        SELECT *
+                        FROM {hashes}
+                        WHERE hash = hash.hash AND address <> hash.address
+                    )
+                )
                 ORDER BY hash.hash;
             ",
+            start = part.start(),
+            end = part.end(),
             addresses = TABLE_ADDRESSES,
             hashes = TABLE_HASHES
-        ))?))
+        );
+
+        Ok(Self(conn.prepare(&query)?))
     }
 
     /// Iterate over the list of resulting hashes.

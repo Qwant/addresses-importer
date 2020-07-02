@@ -4,6 +4,7 @@ use std::borrow::Borrow;
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::num::ParseIntError;
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -13,6 +14,34 @@ use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rusqlite::{Connection, NO_PARAMS};
 use tools::{Address, CompatibleDB};
+
+/// Partition a range into several distinct partitions, given by increasing value.
+///
+/// # Example
+///
+/// ```
+/// use deduplicator::utils::partition;
+///
+/// assert_eq!(partition(0..=99, 2).collect::<Vec<_>>(), vec![0..=49, 50..=99]);
+/// ```
+#[allow(clippy::range_minus_one)]
+pub fn partition(
+    range: RangeInclusive<i64>,
+    nb_parts: usize,
+) -> impl Iterator<Item = RangeInclusive<i64>> {
+    let min = i128::from(*range.start());
+    let max = i128::from(*range.end()) + 1;
+    let nb_parts = i128::try_from(nb_parts).expect("overflow when computing partitions");
+
+    let bounds = (0..=nb_parts)
+        .map(move |part| min + part * (max - min) / nb_parts)
+        .map(|bound| bound.try_into().expect("bounds should fit in i64"));
+
+    bounds
+        .clone()
+        .zip(bounds.skip(1))
+        .map(|(start, end)| start..=(end - 1))
+}
 
 /// Parse a string into a duration from a number of milliseconds.
 ///
@@ -161,12 +190,6 @@ where
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
     let input_conn = Connection::open(&path)?;
-    let nb_addresses = usize::try_from(input_conn.query_row(
-        "SELECT COUNT(*) FROM addresses;",
-        NO_PARAMS,
-        |row| row.get(0).map(|x: isize| x),
-    )?)
-    .expect("failed to count number of addresses");
 
     // Query list of addresses
     let mut stmt = input_conn.prepare("SELECT * FROM addresses;")?;
@@ -174,7 +197,6 @@ where
         .query_map(NO_PARAMS, |row| row.try_into())?
         .progress()
         .with_refresh_delay(refresh_delay)
-        .with_iter_size(nb_addresses)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))
         .with_output_stream(prog_rs::OutputStream::StdErr)
         .filter_map(|addr| {

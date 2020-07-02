@@ -20,25 +20,7 @@ importer.
 cargo run --release -- --osm-db path/to/osm_as_sqlite.db --openaddresses-db path/to/openaddresses_as_sqlite.db
 ```
 
-The output will be an SQLite database with a structure similar to the one
-described [here](https://github.com/QwantResearch/addresses-importer#importers):
-(this is probably temporary as we will probably prefer outputing a CSV file)
-
-```sql
-addresses(
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    lat         REAL NOT NULL,
-    lon         REAL NOT NULL,
-    number      TEXT,
-    street      TEXT NOT NULL,
-    unit        TEXT,
-    city        TEXT,
-    district    TEXT,
-    region      TEXT,
-    postcode    TEXT,
-    rank        REAL
-)
-```
+This will output a CSV file using the same format as OpenAddresses.
 
 If you want more information on the available options, use `-h` or `--help`:
 
@@ -52,7 +34,7 @@ Duplicate criteria
 Two addresses are considered duplicates if one of these two properties is true:
 
  - The distance between the two addresses is less than 100 meters and according
-   to libpostal and:
+   to libpostal:
      - have the same house number
      - are likely to be in the same street (if there is less than 10 meters
        between the two addresses, libpostal is allowed to only output
@@ -76,6 +58,6 @@ The deduplication is done through two steps:
     libpostal.
 
  2. Then, the pairs of addresses with conflicting hashes are extracted from the
-    database, for each of these pairs a more accurate criteria is applied to
+    database, for each of these pairs a more accurate criterion is applied to
     decide if it is actually a duplicate. Finally, for each actual duplicate,
     one of the two addresses is removed from the database.

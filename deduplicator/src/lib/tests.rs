@@ -8,10 +8,10 @@ use std::path::PathBuf;
 use importer_openaddresses::OpenAddress;
 use rusqlite::{Connection, NO_PARAMS};
 use tempdir::TempDir;
-use tools::Address;
-use tools::CompatibleDB;
+use tools::{Address, CompatibleDB};
 
 use crate::deduplicator::{DedupeConfig, Deduplicator};
+use crate::utils::partition;
 
 const DB_NO_DUPES: &str = "data/tests/no_dupes.sql";
 const DB_WITH_DUPES: &str = "data/tests/with_dupes.sql";
@@ -181,4 +181,21 @@ fn csv_is_complete() -> rusqlite::Result<()> {
     // Compare results
     assert_same_addresses(output_addresses, csv_addresses);
     Ok(())
+}
+
+#[test]
+fn test_partition() {
+    for min_val in 0..=100 {
+        for max_val in min_val..=100 {
+            for nb_parts in 1..=10 {
+                assert_eq!(partition(min_val..=max_val, nb_parts).count(), nb_parts);
+                assert_eq!(
+                    partition(min_val..=max_val, nb_parts)
+                        .flatten()
+                        .collect::<Vec<_>>(),
+                    (min_val..=max_val).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
 }

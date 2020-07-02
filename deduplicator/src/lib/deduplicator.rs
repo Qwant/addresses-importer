@@ -1,4 +1,6 @@
 use std::cmp::max;
+use std::collections::HashSet;
+use std::convert::TryInto;
 use std::io::{stderr, Write};
 use std::mem::drop;
 use std::path::PathBuf;
@@ -9,10 +11,11 @@ use crossbeam_channel as channel;
 use importer_openaddresses::OpenAddress;
 use itertools::Itertools;
 use prog_rs::prelude::*;
+use prog_rs::StepProgress;
 use rusqlite::DropBehavior;
 use tools::Address;
 
-use crate::db_hashes::{DbHashes, HashIterItem};
+use crate::db_hashes::DbHashes;
 use crate::dedupe::{hash_address, is_duplicate};
 use crate::utils::is_constraint_violation_error;
 
@@ -73,51 +76,49 @@ impl Deduplicator {
         )?)
     }
 
-    /// Compute duplicate pairs inserted in the deduplicator. A set of addresses that need to be
-    /// deleted will be computed and inserted into the database.
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {
         teprintln!("Build index on hashes");
         self.db.create_hashes_index()?;
 
-        // --- Query collisions from DB
-        let count_addresses_before = self.db.count_addresses()?;
-        let count_hashes = self.db.count_hashes()?;
-
-        teprintln!(
-            "Compute hash collisions ({} addresses, {} hashes)",
-            count_addresses_before,
-            count_hashes
-        );
-
-        let conn_get_collisions = self.db.get_conn()?;
-        let mut sorted_hashes = DbHashes::get_collisions_iter(&conn_get_collisions)?;
-
         // Eliminate false positives in parallel using following pipeline:
         //
-        // [     col_sender     ] main thread
+        // [     del_sender      ] worker threads
         //            |
-        //            |  (address, rank)
+        //            |  (new_count, address_id) : update progress and an address to remove
         //            v
-        // [    col_receiver    ]
-        // [         |||        ] worker threads
-        // [     del_sender     ]
-        //            |
-        //            |  (address, rank, hashes)
-        //            v
-        // [    del_receiver    ] writer thread
+        // [    del_receiver     ] main thread
 
-        let nb_workers = max(3, self.config.nb_threads) - 2;
-        let (col_sender, col_receiver) = channel::bounded::<Vec<HashIterItem>>(CHANNELS_SIZE);
-        let (del_sender, del_receiver) = channel::bounded(CHANNELS_SIZE);
+        let nb_workers = max(2, self.config.nb_threads) - 1;
+        let (del_sender, del_receiver) = channel::unbounded();
 
         // --- Init worker threads
 
-        for _ in 0..nb_workers {
-            let col_receiver = col_receiver.clone();
+        for part in 0..nb_workers {
             let del_sender = del_sender.clone();
+            let conn = self.db.get_conn()?;
 
             thread::spawn(move || {
-                for mut pack in col_receiver {
+                let mut sorted_hashes =
+                    DbHashes::get_collisions_iter_for_parts(&conn, part, nb_workers)
+                        .expect("failed initializing collisions request");
+
+                let conflicting_packs = sorted_hashes
+                    .iter()
+                    .expect("failed reading conflicting hashes")
+                    .filter_map(|item| {
+                        item.map_err(|err| teprintln!("Failed retrieving hash: {}", err))
+                            .ok()
+                    })
+                    .group_by(|addr| addr.hash);
+
+                // Keep track of the number of hashes handled since last time data was sent into
+                // the channel. This counter will be sent and reset at each communication.
+                let mut addr_since_last_send = 0;
+
+                for (_key, pack) in conflicting_packs.into_iter() {
+                    let mut pack: Vec<_> = pack.collect();
+                    addr_since_last_send += pack.len();
+
                     if pack.len() > 5000 {
                         // In practice this should not happen often, however in the case where this
                         // issue is raised, it would be necessary to implement a specific way of
@@ -166,9 +167,10 @@ impl Deduplicator {
                             .any(|kept| is_duplicate(&item.address, &kept.address));
 
                         if item_is_duplicate {
-                            del_sender.send(item.id).expect(
+                            del_sender.send((addr_since_last_send, item.id)).expect(
                                 "failed sending id to delete: channel may have closed to early",
                             );
+                            addr_since_last_send = 0;
                         } else {
                             kept_items.push(item);
                         }
@@ -177,66 +179,64 @@ impl Deduplicator {
             });
         }
 
-        // Drop channels that were cloned before being sent
-        drop(col_receiver);
+        // Drop sending channel, receiving channel will close as soon as all threads finished.
         drop(del_sender);
 
-        // --- Init writer thread
+        // --- Compute stats
 
-        let mut conn_insert = self.db.get_conn()?;
-
-        let writer_thread = thread::spawn(move || {
-            let mut tran_insert = conn_insert
-                .transaction()
-                .expect("failed to init transaction");
-            tran_insert.set_drop_behavior(DropBehavior::Commit);
-            let mut inserter =
-                DbHashes::get_inserter(&mut tran_insert).expect("failed to init inserter");
-
-            // Collect the list of addresses to remove
-            let to_delete: std::collections::HashSet<_> = del_receiver.iter().collect();
-
-            for id in to_delete {
-                match inserter.insert_to_delete(id) {
-                    Err(err) if !is_constraint_violation_error(&err) => {
-                        teprintln!("Failed to insert id to delete in the database: {}", err)
-                    }
-                    _ => (),
-                }
-            }
-        });
-
-        // --- Send conflicting pairs into channels
-
-        // Pack conflicting items together
-        let count_collisions = self.db.count_collisions()? as usize;
-        let conflicting_packs = sorted_hashes
-            .iter()?
-            .progress()
+        // Initialize progress bar before computing stats to initialize the timer used to compute
+        // speed.
+        let mut progress = StepProgress::new()
             .with_refresh_delay(self.config.refresh_delay)
-            .with_iter_size(count_collisions)
-            .with_prefix("Filter colisions")
-            .with_output_stream(prog_rs::OutputStream::StdErr)
-            .filter_map(|item| {
-                item.map_err(|err| teprintln!("Failed retrieving hash: {}", err))
-                    .ok()
+            .with_prefix("Filter collisions")
+            .with_output_stream(prog_rs::OutputStream::StdErr);
+
+        let count_addresses_before = self.db.count_addresses()?;
+        let count_hashes = self.db.count_hashes()?;
+
+        teprintln!(
+            "Compute hash collisions ({} addresses, {} hashes)",
+            count_addresses_before,
+            count_hashes
+        );
+
+        let count_collisions = self
+            .db
+            .count_collisions()?
+            .try_into()
+            .expect("overflow for count of collisions");
+
+        progress = progress.with_max_step(count_collisions);
+
+        // --- Collect addresses to remove
+
+        let to_delete: HashSet<_> = del_receiver
+            .iter()
+            .map(|(new_progress, id)| {
+                progress.step(new_progress);
+                id
             })
-            .group_by(|addr| addr.hash);
+            .collect();
 
-        // Remove packs of single elements
-        let conflicting_packs = conflicting_packs
-            .into_iter()
-            .map(|(_key, pack)| pack.collect::<Vec<_>>())
-            .filter(|pack| pack.len() >= 2);
+        progress.finish();
 
-        for pack in conflicting_packs {
-            col_sender
-                .send(pack)
-                .expect("failed to send collision: channel may have closed too early");
+        // --- Delete conflicting addresses
+
+        let mut conn = self.db.get_conn()?;
+        let mut tran_insert = conn.transaction().expect("failed to init transaction");
+        tran_insert.set_drop_behavior(DropBehavior::Commit);
+        let mut inserter =
+            DbHashes::get_inserter(&mut tran_insert).expect("failed to init inserter");
+
+        for id in to_delete {
+            match inserter.insert_to_delete(id) {
+                Err(err) if !is_constraint_violation_error(&err) => {
+                    teprintln!("Failed to insert id to delete in the database: {}", err)
+                }
+                _ => {}
+            }
         }
 
-        drop(col_sender);
-        writer_thread.join().expect("failed joining writing thread");
         Ok(())
     }
 
