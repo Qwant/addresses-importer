@@ -40,6 +40,8 @@ const TAGS_TO_KEEP: &[&str] = &[
     "addr:postcode",
 ];
 
+const MAX_VALID_HOUSENUMBER_LENGTH: usize = 8;
+
 /// We need to know what kind the element is when reading the database in order to deserialize it.
 macro_rules! get_kind {
     ($obj:expr) => {
@@ -244,7 +246,7 @@ impl DBNodes {
                 f(self.get_way(Cow::Borrowed(obj)))
             } else if obj.is_relation() {
                 f(self.get_relation(Cow::Borrowed(obj)))
-            } else if obj.tags().iter().any(|t| t.0 == "addr:housenumber")
+            } else if obj.tags().iter().any(is_valid_housenumber_tag)
                 && obj.tags().iter().any(|t| t.0 == "addr:street")
             {
                 f(StoredObj::Node(Cow::Borrowed(obj)))
@@ -264,7 +266,7 @@ impl DBNodes {
                 f(self.get_way(Cow::Owned(obj)))
             } else if obj.is_relation() {
                 f(self.get_relation(Cow::Owned(obj)))
-            } else if obj.tags().iter().any(|t| t.0 == "addr:housenumber")
+            } else if obj.tags().iter().any(is_valid_housenumber_tag)
                 && obj.tags().iter().any(|t| t.0 == "addr:street")
             {
                 f(StoredObj::Node(Cow::Owned(obj)))
@@ -350,12 +352,12 @@ fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
             .get_objs_and_deps_store(
                 |obj| match obj {
                     OsmObj::Node(o) => {
-                        o.tags.iter().any(|x| x.0 == "addr:housenumber")
+                        o.tags.iter().any(is_valid_housenumber_tag)
                             && o.tags.iter().any(|x| x.0 == "addr:street")
                     }
                     OsmObj::Way(w) => {
                         !w.nodes.is_empty()
-                            && w.tags.iter().any(|x| x.0 == "addr:housenumber")
+                            && w.tags.iter().any(is_valid_housenumber_tag)
                             && w.tags.iter().any(|x| x.0 == "addr:street")
                     }
                     OsmObj::Relation(r) => {
@@ -430,7 +432,7 @@ fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
             };
             for sub_obj in objs {
                 match sub_obj {
-                    StoredObj::Node(n) if n.tags().iter().any(|t| t.0 == "addr:housenumber") => {
+                    StoredObj::Node(n) if n.tags().iter().any(is_valid_housenumber_tag) => {
                         match &*n {
                             OsmObj::Node(n) => {
                                 let mut addr = new_address(&n.tags, n.lat(), n.lon());
@@ -440,9 +442,7 @@ fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
                             _ => unreachable!(),
                         }
                     }
-                    StoredObj::Way(w, nodes)
-                        if w.tags().iter().any(|t| t.0 == "addr:housenumber") =>
-                    {
+                    StoredObj::Way(w, nodes) if w.tags().iter().any(is_valid_housenumber_tag) => {
                         if let Some((lat, lon)) = get_way_lat_lon(&nodes) {
                             let mut addr = new_address(&w.tags(), lat, lon);
                             addr.street = Some(addr_name.clone());
@@ -493,6 +493,13 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(pbf_file: P, db: &mut T
         count_after - count_before,
         count_after
     );
+}
+
+fn is_valid_housenumber_tag(tag_kv: (&String, &String)) -> bool {
+    // Long "housenumber" values should be excluded as they probably don't represent a house number.
+    // Example: "addr:housenumber=Cochin International Airport Limited"
+    let (key, value) = tag_kv;
+    key == "addr:housenumber" && value.len() <= MAX_VALID_HOUSENUMBER_LENGTH
 }
 
 #[cfg(test)]
