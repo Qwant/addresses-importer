@@ -3889,6 +3889,16 @@
 	<node id="2383082190" lat="48.8520926" lon="2.0516941" version="1" timestamp="1970-01-01T00:00:01Z" changeset="1"/>
 	<node id="2383082191" lat="48.8526292" lon="2.0508107" version="1" timestamp="1970-01-01T00:00:01Z" changeset="1"/>
 	<node id="2383082192" lat="48.8507285" lon="2.0535226" version="1" timestamp="1970-01-01T00:00:01Z" changeset="1"/>
+	<node id="2599319269" version="4" timestamp="2020-05-30T08:36:50Z" lat="10.1555498" lon="76.3893190">
+		<tag k="addr:city" v="Nedumbassery"/>
+		<tag k="addr:housenumber" v="Cochin International Airport Limited"/>
+		<tag k="addr:postcode" v="683111"/>
+		<tag k="addr:street" v="Kochi Airport (P.O)"/>
+		<tag k="aeroway" v="terminal"/>
+		<tag k="building" v="yes"/>
+		<tag k="name" v="Terminal 1"/>
+		<tag k="website" v="http://cial.aero/"/>
+	</node>
 	<node id="2628390665" lat="48.8532346" lon="2.0507225" version="1" timestamp="1970-01-01T00:00:01Z" changeset="1"/>
 	<node id="2628390670" lat="48.853264" lon="2.0505779" version="1" timestamp="1970-01-01T00:00:01Z" changeset="1"/>
 	<node id="2628390672" lat="48.8533009" lon="2.0505207" version="1" timestamp="1970-01-01T00:00:01Z" changeset="1"/>
