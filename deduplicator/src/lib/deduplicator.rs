@@ -138,11 +138,19 @@ impl Deduplicator {
                             let mut stream = stderr();
                             let mut writer = csv::Writer::from_writer(&mut stream);
 
-                            for item in pack.into_iter().take(10) {
-                                writer.serialize(OpenAddress::from(item.address)).ok();
+                            for item in pack.iter().take(10) {
+                                writer
+                                    .serialize(OpenAddress::from(item.address.clone()))
+                                    .ok();
                             }
 
                             writer.flush().expect("failed to flush CSV dump");
+                        }
+
+                        for item in pack {
+                            del_sender.send((0, item.id)).expect(
+                                "failed sending id to delete: channel may have closed to early",
+                            );
                         }
 
                         continue;
@@ -465,7 +473,9 @@ where
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
     fn insert(&mut self, addr: Address) {
-        if addr.number.as_ref().map(|num| num == "S/N").unwrap_or(true) {
+        let number = addr.number.as_deref().unwrap_or("");
+
+        if ["", "S/N"].contains(&number.trim()) {
             // House number is not specified.
             return;
         }
