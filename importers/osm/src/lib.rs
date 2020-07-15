@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn check_relations() {
-        let pbf_file = "test-files/relations_ways.pbf";
+        let pbf_file = "test-files/osm_input.pbf";
         let db_file = "check_relations.db";
 
         let mut db = DB::new(&db_file, 0, true).expect("Failed to initialize DB");
