@@ -115,6 +115,13 @@ impl Deduplicator {
                 // the channel. This counter will be sent and reset at each communication.
                 let mut addr_since_last_send = 0;
 
+                let send = |addr_since_last_send: &mut usize, id: i64| {
+                    del_sender
+                        .send((*addr_since_last_send, id))
+                        .expect("failed sending id to delete: channel may have closed to early");
+                    *addr_since_last_send = 0;
+                };
+
                 for (_key, pack) in conflicting_packs.into_iter() {
                     let mut pack: Vec<_> = pack.collect();
                     addr_since_last_send += pack.len();
@@ -138,11 +145,17 @@ impl Deduplicator {
                             let mut stream = stderr();
                             let mut writer = csv::Writer::from_writer(&mut stream);
 
-                            for item in pack.into_iter().take(10) {
-                                writer.serialize(OpenAddress::from(item.address)).ok();
+                            for item in pack.iter().take(10) {
+                                writer
+                                    .serialize(OpenAddress::from(item.address.clone()))
+                                    .ok();
                             }
 
                             writer.flush().expect("failed to flush CSV dump");
+                        }
+
+                        for item in pack {
+                            send(&mut addr_since_last_send, item.id);
                         }
 
                         continue;
@@ -167,10 +180,7 @@ impl Deduplicator {
                             .any(|kept| is_duplicate(&item.address, &kept.address));
 
                         if item_is_duplicate {
-                            del_sender.send((addr_since_last_send, item.id)).expect(
-                                "failed sending id to delete: channel may have closed to early",
-                            );
-                            addr_since_last_send = 0;
+                            send(&mut addr_since_last_send, item.id);
                         } else {
                             kept_items.push(item);
                         }
@@ -465,7 +475,9 @@ where
     R: Fn(&Address) -> f64 + Clone + Send + 'static,
 {
     fn insert(&mut self, addr: Address) {
-        if addr.number.as_ref().map(|num| num == "S/N").unwrap_or(true) {
+        let number = addr.number.as_deref().unwrap_or("");
+
+        if ["", "S/N"].contains(&number.trim()) {
             // House number is not specified.
             return;
         }
