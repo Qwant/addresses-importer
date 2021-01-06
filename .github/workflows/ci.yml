@@ -5,6 +5,9 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    container: remidupre/libpostal:latest
+    env:
+      LD_LIBRARY_PATH: /usr/local/lib
     strategy:
       matrix:
         dir:
@@ -13,28 +16,37 @@ jobs:
           - importers/bano
           - importers/openaddresses
           - deduplicator
+    defaults:
+      run:
+        working-directory: ${{ matrix['dir'] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+
       - name: Rust stable with rustfmt
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           components: rustfmt
+
       - run: cargo test
-        working-directory: ${{ matrix['dir'] }}
       - run: cargo fmt --all -- --check
-        working-directory: ${{ matrix['dir'] }}
+
   run:
     runs-on: ubuntu-latest
+    container: remidupre/libpostal:latest
+    env:
+      LD_LIBRARY_PATH: /usr/local/lib
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+
       - name: Rust stable with rustfmt
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
-      - run: cargo run -- --osm ../importers/osm/test-files/relations_ways.pbf --output-csv test.csv
+
+      - run: cargo run -- --osm ../importers/osm/test-files/relations_ways.pbf -o test.csv.gz
         working-directory: deduplicator
