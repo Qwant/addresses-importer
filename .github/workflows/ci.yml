@@ -48,5 +48,5 @@ jobs:
           profile: minimal
           toolchain: stable
 
-      - run: cargo run -- --osm ../importers/osm/test-files/relations_ways.pbf -o test.csv.gz
+      - run: cargo run -- --osm ../importers/osm/test-files/osm_input.pbf --skip-source-filters -o test.csv.gz
         working-directory: deduplicator

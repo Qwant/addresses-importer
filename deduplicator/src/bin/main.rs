@@ -42,6 +42,11 @@ struct Params {
     #[structopt(long)]
     osm_db: Vec<PathBuf>,
 
+    /// While not explicitly disabled with this flag, addresses from france are
+    /// only imported from BANO sources.
+    #[structopt(long)]
+    skip_source_filters: bool,
+
     /// Path for output database.
     #[structopt(long, default_value = "addresses.db")]
     output_db: PathBuf,
@@ -126,7 +131,8 @@ fn main() -> rusqlite::Result<()> {
     for (source, path) in raw_sources {
         tprintln!("Loading {:?} addresses from path {:?}...", source, path);
 
-        let filter = move |addr: &Address| source.filter(&addr);
+        let skip_source_filters = params.skip_source_filters;
+        let filter = move |addr: &Address| skip_source_filters || source.filter(&addr);
         let ranking = move |addr: &Address| source.ranking(&addr);
         let import_method = match source {
             Source::Osm => importer_osm::import_addresses,
