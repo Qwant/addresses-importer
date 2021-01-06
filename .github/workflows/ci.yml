@@ -10,6 +10,9 @@ jobs:
       LD_LIBRARY_PATH: /usr/local/lib
     strategy:
       matrix:
+        toolchain:
+          - stable
+          - nightly
         dir:
           - tools
           - importers/osm
@@ -27,7 +30,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: ${{ matrix['toolchain'] }}
           components: rustfmt
 
       - run: cargo test
@@ -38,6 +41,11 @@ jobs:
     container: remidupre/libpostal:latest
     env:
       LD_LIBRARY_PATH: /usr/local/lib
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - nightly
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -46,7 +54,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: ${{ matrix['toolchain'] }}
 
       - run: cargo run -- --osm ../importers/osm/test-files/osm_input.pbf --skip-source-filters -o test.csv.gz
         working-directory: deduplicator
