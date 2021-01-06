@@ -1,0 +1,40 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir:
+          - tools
+          - importers/osm
+          - importers/bano
+          - importers/openaddresses
+          - deduplicator
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Rust stable with rustfmt
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: rustfmt
+      - run: cargo test
+        working-directory: ${{ matrix['dir'] }}
+      - run: cargo fmt --all -- --check
+        working-directory: ${{ matrix['dir'] }}
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Rust stable with rustfmt
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+      - run: cargo run -- --osm ../importers/osm/test-files/relations_ways.pbf --output-csv test.csv
+        working-directory: deduplicator
