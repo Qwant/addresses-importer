@@ -33,6 +33,14 @@ jobs:
           toolchain: ${{ matrix['toolchain'] }}
           components: rustfmt
 
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ${{ matrix['dir'] }}/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ matrix['toolchain'] }}-${{ matrix['dir'] }}-${{ hashFiles('**/Cargo.lock') }}
+
       - run: cargo test
       - run: cargo fmt --all -- --check
 
@@ -55,6 +63,14 @@ jobs:
         with:
           profile: minimal
           toolchain: ${{ matrix['toolchain'] }}
+
+      - uses: actions/cache@v2
+        with:
+          path: |
+            deduplicator/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ matrix['toolchain'] }}-${{ matrix['dir'] }}-${{ hashFiles('**/Cargo.lock') }}
 
       - run: cargo run -- --osm ../importers/osm/test-files/osm_input.pbf --skip-source-filters -o test.csv.gz
         working-directory: deduplicator
