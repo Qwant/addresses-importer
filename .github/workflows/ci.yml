@@ -1,0 +1,100 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: qwantresearch/addresses-importer-libpostal
+    env:
+      LD_LIBRARY_PATH: /usr/local/lib
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - nightly
+        dir:
+          - tools
+          - importers/osm
+          - importers/bano
+          - importers/openaddresses
+          - deduplicator
+    defaults:
+      run:
+        working-directory: ${{ matrix['dir'] }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Rust stable with rustfmt
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix['toolchain'] }}
+          components: rustfmt
+
+      - name: Fetch cargo cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ matrix['dir'] }}/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ matrix['toolchain'] }}-${{ matrix['dir'] }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - run: cargo test
+      - run: cargo fmt --all -- --check
+
+  run:
+    runs-on: ubuntu-latest
+    container: qwantresearch/addresses-importer-libpostal
+    env:
+      LD_LIBRARY_PATH: /usr/local/lib
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - nightly
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Rust stable with rustfmt
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix['toolchain'] }}
+
+      - name: Fetch cargo cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            deduplicator/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ matrix['toolchain'] }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - run: cargo run -- --osm ../importers/osm/test-files/osm_input.pbf --skip-source-filters -o test.csv.gz
+        working-directory: deduplicator
+
+  docker_image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Docker build
+        run: |
+          docker build --label "org.label-schema.vcs-ref=$GITHUB_SHA" -t qwantresearch/addresses-importer .
+
+      - name: Login to DockerHub
+        if: github.ref == 'refs/heads/master'
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker push
+        if: github.ref == 'refs/heads/master'
+        run: |
+          docker push qwantresearch/addresses-importer
