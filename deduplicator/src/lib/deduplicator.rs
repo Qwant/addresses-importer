@@ -68,12 +68,7 @@ impl Deduplicator {
         F: Fn(&Address) -> bool + Clone + Send + 'static,
         R: Fn(&Address) -> f64 + Clone + Send + 'static,
     {
-        Ok(DbInserter::new(
-            &self.db,
-            filter,
-            ranking,
-            self.config.nb_threads,
-        )?)
+        DbInserter::new(&self.db, filter, ranking, self.config.nb_threads)
     }
 
     pub fn compute_duplicates(&mut self) -> rusqlite::Result<()> {

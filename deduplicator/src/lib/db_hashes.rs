@@ -36,7 +36,7 @@ impl DbHashes {
     /// ```
     pub fn new(db_path: PathBuf, cache_size: Option<u32>) -> rusqlite::Result<Self> {
         let conn = Connection::open(&db_path)?;
-        let cache_size = cache_size.unwrap_or_else(|| 10_000);
+        let cache_size = cache_size.unwrap_or(10_000);
 
         conn.pragma_update(None, "page_size", &4096)?;
         conn.pragma_update(None, "cache_size", &cache_size)?;
@@ -274,7 +274,7 @@ impl DbHashes {
     ///     .map(|addr| addr.unwrap())
     ///     .collect();
     /// ```
-    pub fn get_addresses<'c>(conn: &'c Connection) -> rusqlite::Result<AddressesIter<'c>> {
+    pub fn get_addresses(conn: &Connection) -> rusqlite::Result<AddressesIter> {
         AddressesIter::prepare(conn)
     }
 
@@ -301,11 +301,11 @@ impl DbHashes {
     ///     .map(|item| item.unwrap())
     ///     .collect();
     /// ```
-    pub fn get_collisions_iter_for_parts<'c>(
-        conn: &'c Connection,
+    pub fn get_collisions_iter_for_parts(
+        conn: &Connection,
         part: usize,
         nb_parts: usize,
-    ) -> rusqlite::Result<CollisionsIter<'c>> {
+    ) -> rusqlite::Result<CollisionsIter> {
         CollisionsIter::prepare(conn, part, nb_parts)
     }
 
@@ -432,12 +432,11 @@ impl<'c> AddressesIter<'c> {
     }
 
     /// Iterate over the list of result addresses.
-    pub fn iter<'s>(
-        &'s mut self,
-    ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<Address>> + 's> {
+    pub fn iter(
+        &mut self,
+    ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<Address>> + '_> {
         let Self(stmt) = self;
-
-        Ok(stmt.query_map(NO_PARAMS, |row| row.try_into())?)
+        stmt.query_map(NO_PARAMS, |row| row.try_into())
     }
 }
 
@@ -525,18 +524,16 @@ impl<'c> CollisionsIter<'c> {
     }
 
     /// Iterate over the list of resulting hashes.
-    pub fn iter<'s>(
-        &'s mut self,
-    ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<HashIterItem>> + 's> {
-        let Self(stmt) = self;
-
-        Ok(stmt.query_map(NO_PARAMS, |row| {
+    pub fn iter(
+        &mut self,
+    ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<HashIterItem>> + '_> {
+        self.0.query_map(NO_PARAMS, |row| {
             Ok(HashIterItem {
                 address: row.try_into()?,
                 hash: row.get("hash")?,
                 id: row.get("id")?,
                 rank: row.get("rank")?,
             })
-        })?)
+        })
     }
 }

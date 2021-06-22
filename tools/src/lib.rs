@@ -4,7 +4,7 @@ use std::fs;
 
 /// Returns a `String` representing the current time under the form "HH:MM:SS".
 pub fn get_time() -> String {
-    let now = time::Time::now();
+    let now = time::OffsetDateTime::now_utc();
     format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second())
 }
 
@@ -486,7 +486,7 @@ impl CompatibleDB for DB {
             .prepare("SELECT COUNT(DISTINCT city) FROM addresses;")
             .expect("failed to prepare");
         let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
+            .query_map(NO_PARAMS, |row| row.get(0))
             .expect("query_map failed");
         iter.next().expect("no count???").expect("failed")
     }
@@ -498,7 +498,7 @@ impl CompatibleDB for DB {
             .prepare("SELECT COUNT(*) FROM addresses")
             .expect("failed to prepare");
         let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
+            .query_map(NO_PARAMS, |row| row.get(0))
             .expect("query_map failed");
         let x: i64 = iter.next().expect("no count???").expect("failed");
         x + self.buffer.len() as i64
@@ -511,7 +511,7 @@ impl CompatibleDB for DB {
             .prepare("SELECT COUNT(*) FROM addresses_errors")
             .expect("failed to prepare");
         let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
+            .query_map(NO_PARAMS, |row| row.get(0))
             .expect("query_map failed");
         iter.next().expect("no count???").expect("failed")
     }
