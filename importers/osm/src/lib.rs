@@ -280,7 +280,7 @@ impl DBNodes {
             .prepare("SELECT COUNT(*) FROM nodes")
             .expect("failed to prepare");
         let mut iter = stmt
-            .query_map(NO_PARAMS, |row| Ok(row.get(0)?))
+            .query_map(NO_PARAMS, |row| row.get(0))
             .expect("query_map failed");
         iter.next().expect("no count???").expect("failed")
     }

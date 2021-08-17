@@ -26,8 +26,8 @@ pub struct OpenAddress {
     pub lon: f64,
 }
 
-impl Into<Address> for OpenAddress {
-    fn into(self) -> Address {
+impl From<OpenAddress> for Address {
+    fn from(val: OpenAddress) -> Self {
         let filter_empty = |field: String| {
             if field.is_empty() {
                 None
@@ -37,15 +37,15 @@ impl Into<Address> for OpenAddress {
         };
 
         Address {
-            lat: self.lat,
-            lon: self.lon,
-            number: filter_empty(self.number),
-            street: filter_empty(self.street),
-            unit: filter_empty(self.unit),
-            city: filter_empty(self.city),
-            district: filter_empty(self.district),
-            region: filter_empty(self.region),
-            postcode: filter_empty(self.postcode),
+            lat: val.lat,
+            lon: val.lon,
+            number: filter_empty(val.number),
+            street: filter_empty(val.street),
+            unit: filter_empty(val.unit),
+            city: filter_empty(val.city),
+            district: filter_empty(val.district),
+            region: filter_empty(val.region),
+            postcode: filter_empty(val.postcode),
         }
     }
 }

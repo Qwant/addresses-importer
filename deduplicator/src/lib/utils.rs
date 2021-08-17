@@ -184,16 +184,16 @@ pub fn postal_repr(address: &Address) -> Vec<rpostal::Address> {
 /// assert!(!is_constraint_violation_error(&Connection::open("file/not/exists.sql").unwrap_err()));
 /// ```
 pub fn is_constraint_violation_error(err: &rusqlite::Error) -> bool {
-    match err {
+    matches!(
+        err,
         rusqlite::Error::SqliteFailure(
             libsqlite3_sys::Error {
                 code: ConstraintViolation,
                 ..
             },
             _,
-        ) => true,
-        _ => false,
-    }
+        )
+    )
 }
 
 /// Load addresses from an SQLite file, into a deduplicator.
