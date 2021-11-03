@@ -325,7 +325,7 @@ impl DbHashes {
     pub fn cleanup_database(&self) -> rusqlite::Result<()> {
         let conn = self.get_conn()?;
 
-        for db in [TABLE_HASHES, TABLE_TO_DELETE].iter() {
+        for db in [TABLE_HASHES, TABLE_TO_DELETE] {
             conn.execute_batch(&format!("DROP TABLE {};", db))?;
         }
 
