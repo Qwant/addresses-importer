@@ -1,6 +1,5 @@
 extern crate tempdir;
 
-use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
@@ -17,7 +16,7 @@ const DB_NO_DUPES: &str = "data/tests/no_dupes.sql";
 const DB_WITH_DUPES: &str = "data/tests/with_dupes.sql";
 
 /// Create an SQLite database from Sql dump
-fn load_dump(path: &PathBuf) -> rusqlite::Result<Connection> {
+fn load_dump(path: PathBuf) -> rusqlite::Result<Connection> {
     let mut sql_buff = String::new();
     let mut file = File::open(path).expect("failed to load test database");
     file.read_to_string(&mut sql_buff)
@@ -56,8 +55,8 @@ fn insert_addresses(
 }
 
 fn assert_same_addresses(mut addresses_1: Vec<Address>, mut addresses_2: Vec<Address>) {
-    addresses_1.sort_by(|addr_1, addr_2| addr_1.partial_cmp(&addr_2).unwrap());
-    addresses_2.sort_by(|addr_1, addr_2| addr_1.partial_cmp(&addr_2).unwrap());
+    addresses_1.sort_by(|addr_1, addr_2| addr_1.partial_cmp(addr_2).unwrap());
+    addresses_2.sort_by(|addr_1, addr_2| addr_1.partial_cmp(addr_2).unwrap());
 
     assert_eq!(addresses_1.len(), addresses_2.len());
 
@@ -73,7 +72,7 @@ fn database_complete() -> rusqlite::Result<()> {
     let output_path = tmp_dir.path().join("addresses.db");
 
     // Read input database
-    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
+    let input_addresses = load_addresses_from_db(&load_dump(DB_NO_DUPES.into())?)?;
     let mut dedupe = Deduplicator::new(
         tmp_dir.path().join("addresses.db"),
         DedupeConfig::default(),
@@ -98,7 +97,7 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
     let output_path = tmp_dir.path().join("addresses.db");
 
     // Read input database
-    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
+    let input_addresses = load_addresses_from_db(&load_dump(DB_NO_DUPES.into())?)?;
     let mut dedupe = Deduplicator::new(
         tmp_dir.path().join("addresses.db"),
         DedupeConfig::default(),
@@ -128,7 +127,7 @@ fn remove_close_duplicates() -> rusqlite::Result<()> {
     let output_path = tmp_dir.path().join("addresses.db");
 
     // Read input database
-    let input_addresses = load_addresses_from_db(&load_dump(&DB_WITH_DUPES.into())?)?;
+    let input_addresses = load_addresses_from_db(&load_dump(DB_WITH_DUPES.into())?)?;
     let mut dedupe = Deduplicator::new(
         tmp_dir.path().join("addresses.db"),
         DedupeConfig::default(),
@@ -152,13 +151,13 @@ fn csv_is_complete() -> rusqlite::Result<()> {
     let output_csv_path = tmp_dir.path().join("addresses.csv.gz");
 
     // Read input database
-    let input_addresses = load_addresses_from_db(&load_dump(&DB_NO_DUPES.into())?)?;
+    let input_addresses = load_addresses_from_db(&load_dump(DB_NO_DUPES.into())?)?;
     let mut dedupe = Deduplicator::new(
         tmp_dir.path().join("addresses.db"),
         DedupeConfig::default(),
         None,
     )?;
-    insert_addresses(&mut dedupe, input_addresses.clone())?;
+    insert_addresses(&mut dedupe, input_addresses)?;
 
     // Dump CSV
     let file = File::create(&output_csv_path).expect("failed to create dump file");

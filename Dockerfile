@@ -1,4 +1,4 @@
-FROM rust:1-slim-stretch as builder
+FROM rust:1-slim-bullseye as builder
 
 WORKDIR /srv/addresses-importer
 

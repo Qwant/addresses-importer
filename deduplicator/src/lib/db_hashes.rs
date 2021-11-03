@@ -2,7 +2,6 @@
 //! it. This database will be used to save hashes of all imported addresses and compute collisions
 //! between them.
 
-use std::convert::TryInto;
 use std::path::PathBuf;
 
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
@@ -325,7 +324,7 @@ impl DbHashes {
     pub fn cleanup_database(&self) -> rusqlite::Result<()> {
         let conn = self.get_conn()?;
 
-        for db in [TABLE_HASHES, TABLE_TO_DELETE].iter() {
+        for db in [TABLE_HASHES, TABLE_TO_DELETE] {
             conn.execute_batch(&format!("DROP TABLE {};", db))?;
         }
 
