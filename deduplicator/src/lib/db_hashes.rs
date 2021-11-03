@@ -2,7 +2,6 @@
 //! it. This database will be used to save hashes of all imported addresses and compute collisions
 //! between them.
 
-use std::convert::TryInto;
 use std::path::PathBuf;
 
 use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};

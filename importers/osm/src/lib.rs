@@ -422,7 +422,7 @@ fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
         },
         StoredObj::Way(way, nodes) => {
             if let Some((lat, lon)) = get_way_lat_lon(&nodes) {
-                db.insert(new_address(&way.tags(), lat, lon));
+                db.insert(new_address(way.tags(), lat, lon));
             }
         }
         StoredObj::Relation(r, objs) => {
@@ -444,7 +444,7 @@ fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
                     }
                     StoredObj::Way(w, nodes) if w.tags().iter().any(is_valid_housenumber_tag) => {
                         if let Some((lat, lon)) = get_way_lat_lon(&nodes) {
-                            let mut addr = new_address(&w.tags(), lat, lon);
+                            let mut addr = new_address(w.tags(), lat, lon);
                             addr.street = Some(addr_name.clone());
                             db.insert(addr);
                         }
@@ -512,7 +512,7 @@ mod tests {
         let pbf_file = "test-files/osm_input.pbf";
         let db_file = "check_relations.db";
 
-        let mut db = DB::new(&db_file, 0, true).expect("Failed to initialize DB");
+        let mut db = DB::new(db_file, 0, true).expect("Failed to initialize DB");
         let db_nodes = get_nodes(&pbf_file);
         assert_eq!(db_nodes.count(), 1406);
         iter_nodes(db_nodes, &mut db);

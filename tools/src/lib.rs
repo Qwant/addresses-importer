@@ -1,5 +1,4 @@
 use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
-use std::convert::{TryFrom, TryInto};
 use std::fs;
 
 /// Returns a `String` representing the current time under the form "HH:MM:SS".

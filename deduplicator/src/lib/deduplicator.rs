@@ -1,6 +1,5 @@
 use std::cmp::max;
 use std::collections::HashSet;
-use std::convert::TryInto;
 use std::io::{stderr, Write};
 use std::mem::drop;
 use std::path::PathBuf;

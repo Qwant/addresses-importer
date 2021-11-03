@@ -1,7 +1,6 @@
 //! Generic utilities.
 
 use std::borrow::Borrow;
-use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::num::ParseIntError;
 use std::ops::RangeInclusive;
