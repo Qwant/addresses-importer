@@ -76,10 +76,20 @@ struct Params {
     refresh_delay: Duration,
 }
 
+impl Params {
+    fn cleanup_empty_paths(mut self) -> Self {
+        for source in [&mut self.bano, &mut self.openaddresses, &mut self.osm] {
+            source.retain(|path| !path.as_os_str().is_empty());
+        }
+
+        self
+    }
+}
+
 fn main() -> rusqlite::Result<()> {
     // --- Read parameters
 
-    let params = Params::from_args();
+    let params = Params::from_args().cleanup_empty_paths();
 
     let db_sources = None
         .into_iter()
@@ -122,8 +132,8 @@ fn main() -> rusqlite::Result<()> {
         load_from_sqlite(
             &mut deduplication,
             path,
-            move |addr| source.filter(&addr),
-            move |addr| source.ranking(&addr),
+            move |addr| source.filter(addr),
+            move |addr| source.ranking(addr),
             params.refresh_delay,
         )?;
     }
@@ -132,8 +142,8 @@ fn main() -> rusqlite::Result<()> {
         tprintln!("Loading {:?} addresses from path {:?}...", source, path);
 
         let skip_source_filters = params.skip_source_filters;
-        let filter = move |addr: &Address| skip_source_filters || source.filter(&addr);
-        let ranking = move |addr: &Address| source.ranking(&addr);
+        let filter = move |addr: &Address| skip_source_filters || source.filter(addr);
+        let ranking = move |addr: &Address| source.ranking(addr);
         let import_method = match source {
             Source::Osm => importer_osm::import_addresses,
             Source::OpenAddress => importer_openaddresses::import_addresses,
