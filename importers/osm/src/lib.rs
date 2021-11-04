@@ -341,13 +341,14 @@ impl Drop for DBNodes {
 /// present in the PBF file.
 ///
 /// To learn more about the filtering rules, please refer to the crate level documentation.
-fn get_nodes<P: AsRef<Path>>(pbf_file: P) -> DBNodes {
-    let mut db_nodes = DBNodes::new("nodes.db", 1000).expect("failed to create DBNodes");
+fn get_nodes(pbf_file: &Path, db_path: &Path) -> DBNodes {
+    let mut db_nodes = DBNodes::new(db_path.to_str().expect("invalid path for nodes db"), 1000)
+        .expect("failed to create DBNodes");
     {
-        let mut reader =
-            OsmPbfReader::new(File::open(&pbf_file).unwrap_or_else(|err| {
-                panic!("Failed to open file {:?}: {}", pbf_file.as_ref(), err)
-            }));
+        let mut reader = OsmPbfReader::new(
+            File::open(&pbf_file)
+                .unwrap_or_else(|err| panic!("Failed to open file {:?}: {}", pbf_file, err)),
+        );
         reader
             .get_objs_and_deps_store(
                 |obj| match obj {
@@ -476,13 +477,13 @@ fn iter_nodes<T: CompatibleDB>(db_nodes: DBNodes, db: &mut T) {
 /// use osm::import_addresses;
 ///
 /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
-/// import_addresses("some_file.pbf", &mut db);
+/// import_addresses("some_file.pbf".as_ref(), "nodes.db".as_ref(), &mut db);
 /// ```
-pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(pbf_file: P, db: &mut T) {
+pub fn import_addresses<T: CompatibleDB>(pbf_file: &Path, nodes_db_path: &Path, db: &mut T) {
     let count_before = db.get_nb_addresses();
 
     teprint!("[OSM] Getting nodes ...\r");
-    let db_nodes = get_nodes(pbf_file);
+    let db_nodes = get_nodes(pbf_file, nodes_db_path);
     teprintln!("[OSM] Getting nodes ... {} nodes", db_nodes.count());
 
     iter_nodes(db_nodes, db);
@@ -513,7 +514,7 @@ mod tests {
         let db_file = "check_relations.db";
 
         let mut db = DB::new(db_file, 0, true).expect("Failed to initialize DB");
-        let db_nodes = get_nodes(&pbf_file);
+        let db_nodes = get_nodes(pbf_file.as_ref(), "nodes.db".as_ref());
         assert_eq!(db_nodes.count(), 1406);
         iter_nodes(db_nodes, &mut db);
         assert_eq!(db.get_nb_addresses(), 361);
