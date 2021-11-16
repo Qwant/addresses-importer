@@ -1,11 +1,15 @@
 use std::ffi::OsStr;
 use std::fs::{self, File};
+use std::io::BufReader;
 use std::path::Path;
 
 use csv::Reader;
 use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
 
 use serde::{Deserialize, Serialize};
+
+/// Size of the read buffer put on top of the input CSV file
+const CSV_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
 /// We store the CSV lines in this struct using `serde`. It allows to have
 /// very straightforward code. All the fields are representation of what can be
@@ -70,7 +74,11 @@ impl From<Address> for OpenAddress {
 /// This function is called on every CSV file encountered in the given folder tree in the
 /// `import_addresses` function. It simply reads it and fills the `db` object.
 fn read_csv<P: AsRef<Path>, T: CompatibleDB>(db: &mut T, file_path: P) {
-    let file = File::open(&file_path).expect("cannot open file");
+    let file = BufReader::with_capacity(
+        CSV_BUFFER_SIZE,
+        File::open(&file_path).expect("cannot open file"),
+    );
+
     let mut rdr = Reader::from_reader(file);
 
     for address in rdr.deserialize::<OpenAddress>() {
