@@ -18,6 +18,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{self, File};
+use std::io::BufReader;
 use std::path::Path;
 
 use geos::Geometry;
@@ -28,6 +29,9 @@ use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
 use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
 
 use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
+
+/// Size of the read buffer put on top of the input PBF file
+const PBF_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
 /// Used to make the stored elements in the first lighter by removing all the unused tags.
 const TAGS_TO_KEEP: &[&str] = &[
@@ -345,11 +349,13 @@ fn get_nodes(pbf_file: &Path, db_path: &Path) -> DBNodes {
     let mut db_nodes = DBNodes::new(db_path.to_str().expect("invalid path for nodes db"), 1000)
         .expect("failed to create DBNodes");
     {
-        let mut reader = OsmPbfReader::new(
+        let file = BufReader::with_capacity(
+            PBF_BUFFER_SIZE,
             File::open(&pbf_file)
                 .unwrap_or_else(|err| panic!("Failed to open file {:?}: {}", pbf_file, err)),
         );
-        reader
+
+        OsmPbfReader::new(file)
             .get_objs_and_deps_store(
                 |obj| match obj {
                     OsmObj::Node(o) => {

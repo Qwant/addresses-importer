@@ -1,9 +1,13 @@
 use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 use std::str::FromStr;
 
 use csv::ReaderBuilder;
 use tools::{teprintln, tprintln, Address, CompatibleDB};
+
+/// Size of the read buffer put on top of the input PBF file
+const CSV_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
 /// Helper macro to convert a CSV field into a `String`.
 macro_rules! get {
@@ -41,7 +45,11 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(file_path: P, db: &mut 
     teprintln!("[BANO] Reading `{}`", file_path.as_ref().display());
     let count_before = db.get_nb_addresses();
 
-    let file = File::open(file_path).expect("cannot open file");
+    let file = BufReader::with_capacity(
+        CSV_BUFFER_SIZE,
+        File::open(file_path).expect("cannot open file"),
+    );
+
     let rdr = ReaderBuilder::new().has_headers(false).from_reader(file);
 
     for x in rdr.into_records() {
