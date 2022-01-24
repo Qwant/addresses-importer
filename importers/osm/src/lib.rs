@@ -15,17 +15,16 @@
 //!    the same rules depending if's a **node** or a **way**. We currently ignore the sub-references
 //!    if they are **relation**s.
 
-use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufRead, BufReader, Seek};
 use std::path::Path;
 
+use fxhash::FxHashMap;
 use geos::Geometry;
-
 use osmpbfreader::objects::{OsmId, Tags};
-use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
+use osmpbfreader::{OsmObj, OsmPbfReader};
 
-use tools::{teprint, tprintln, Address, CompatibleDB};
+use tools::{teprintln, Address, CompatibleDB};
 
 /// Size of the read buffer put on top of the input PBF file
 const PBF_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
@@ -87,126 +86,146 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
     addr
 }
 
-/// Type used to store elements in the "first pass".
-#[derive(Debug)]
-enum StoredObj<'a> {
-    Relation(&'a OsmObj, Vec<StoredObj<'a>>),
-    Way(&'a OsmObj, Vec<&'a OsmObj>),
-    Node(&'a OsmObj),
+/// Type used to pack an object with its dependancies.
+#[derive(Clone, Debug)]
+struct DepObj {
+    root: OsmObj,
+    children: Vec<DepObj>,
 }
 
-fn build_way<'a>(obj: &'a OsmObj, all_objs: &'a BTreeMap<OsmId, OsmObj>) -> StoredObj<'a> {
-    let nodes = match obj {
-        OsmObj::Way(w) => w
-            .nodes
-            .iter()
-            .filter_map(|n| all_objs.get(&OsmId::Node(*n)))
-            .collect::<Vec<_>>(),
-        _ => panic!("only way can be used in get_way"),
-    };
-
-    StoredObj::Way(obj, nodes)
-}
-
-fn build_relation<'a>(obj: &'a OsmObj, all_objs: &'a BTreeMap<OsmId, OsmObj>) -> StoredObj<'a> {
-    let nodes = match obj {
-        OsmObj::Relation(r) => r
-            .refs
-            .iter()
-            .filter_map(|n| {
-                let elem = all_objs.get(&n.member)?;
-
-                if elem.is_way() {
-                    Some(build_way(elem, all_objs))
-                } else if elem.is_relation() {
-                    Some(build_relation(elem, all_objs))
-                } else {
-                    Some(StoredObj::Node(elem))
-                }
-            })
-            .collect::<Vec<_>>(),
-        _ => panic!("only relations can be used in get_relation"),
-    };
-
-    StoredObj::Relation(obj, nodes)
-}
-
-/// Used in the "first pass" to generate the database fulfilled with all the potential addresses
-/// present in the PBF file.
-///
-/// To learn more about the filtering rules, please refer to the crate level documentation.
-fn get_nodes<T: CompatibleDB>(pbf_file: &Path, db: &mut T) {
-    // Raw filter over different OSM types, they are similar except for
-    // relations that would only contain an associated street.
-    let node_filter = |n: &Node| {
-        n.tags.iter().any(is_valid_housenumber_tag) && n.tags.iter().any(|x| x.0 == "addr:street")
-    };
-
-    let way_filter = |w: &Way| {
-        !w.nodes.is_empty()
-            && w.tags.iter().any(is_valid_housenumber_tag)
-            && w.tags.iter().any(|x| x.0 == "addr:street")
-    };
-
-    let rel_filter = |r: &Relation| {
-        !r.refs.is_empty()
-            && r.tags
-                .iter()
-                .any(|x| x.0 == "type" && x.1 == "associatedStreet")
-            && r.tags.iter().any(|x| x.0 == "name")
-    };
-
-    // Init reader
-    let file = BufReader::with_capacity(
-        PBF_BUFFER_SIZE,
-        File::open(&pbf_file)
-            .unwrap_or_else(|err| panic!("Failed to open file {:?}: {}", pbf_file, err)),
-    );
-
-    let mut reader = OsmPbfReader::new(file);
-
-    // First, makes a pass on nodes only
-    teprint!("[OSM] Fetching nodes ...\r");
-
-    for obj in reader.par_iter() {
-        let obj = obj.expect("could not read pbf");
-
-        if obj.is_node() && node_filter(obj.node().unwrap()) {
-            handle_obj(StoredObj::Node(&obj), db)
-        }
+impl DepObj {
+    /// Check if all the children for this node have been extracted from OSM.
+    fn is_complete(&self) -> bool {
+        self.children.len() == self.children.capacity()
     }
 
-    // Then, makes a pass on ways and relations, which requires to store the hierarchy in memory.
-    teprint!("[OSM] Fetching ways and relations ...\r");
+    /// Return an iterator over all id's of this object's children
+    fn expected_children(&self) -> impl Iterator<Item = OsmId> + '_ {
+        let way_children = (self.root.way())
+            .into_iter()
+            .flat_map(|way| way.nodes.iter().copied().map(Into::into));
 
-    let osm_objs = reader
-        .get_objs_and_deps(|obj| match obj {
-            OsmObj::Node(_) => false,
-            OsmObj::Way(w) => way_filter(w),
-            OsmObj::Relation(r) => rel_filter(r),
-        })
-        .expect("could not read ways and relations");
+        let rel_children = (self.root.relation())
+            .into_iter()
+            .flat_map(|way| way.refs.iter().map(|r| r.member));
 
-    osm_objs
-        .values()
-        .filter_map(|obj| {
-            Some(match obj {
-                OsmObj::Way(way) if way_filter(way) => build_way(obj, &osm_objs),
-                OsmObj::Relation(rel) if rel_filter(rel) => build_relation(obj, &osm_objs),
-                _ => return None,
-            })
-        })
-        .for_each(|obj| handle_obj(obj, db));
+        way_children.chain(rel_children)
+    }
 
-    // .get_objs_and_deps_store(
-    //     |obj| match obj {
-    //         OsmObj::Node(o) => node_filter(o),
-    //         OsmObj::Way(w) => way_filter(w),
-    //         OsmObj::Relation(r) => rel_filter(r),
-    //     },
-    //     &mut db_nodes,
-    // )
-    // .expect("get_nodes: get_objs_and_deps_store failed");
+    /// Reorder children with respect to OSM specified order.
+    fn reorder(&mut self) {
+        assert!(self.is_complete());
+        let len = self.children.len();
+
+        let mut old_children = std::mem::take(&mut self.children);
+        let mut new_children = Vec::with_capacity(len);
+
+        new_children.extend(self.expected_children().into_iter().map(move |obj_id| {
+            let child_pos = old_children
+                .iter()
+                .position(|obj| obj.root.id() == obj_id)
+                .unwrap();
+
+            old_children.swap_remove(child_pos)
+        }));
+
+        self.children = new_children;
+
+        // let index: FxHashMap<OsmId, usize> = self
+        //     .expected_children()
+        //     .enumerate()
+        //     .map(|(pos, obj)| (obj, pos))
+        //     .collect();
+        //
+        // self.children
+        //     .sort_unstable_by_key(|obj| index[&obj.root.id()]);
+    }
+}
+
+impl From<OsmObj> for DepObj {
+    fn from(obj: OsmObj) -> Self {
+        let max_children = {
+            match &obj {
+                OsmObj::Node(_) => 0,
+                OsmObj::Way(w) => w.nodes.len(),
+                OsmObj::Relation(r) => r.refs.len(),
+            }
+        };
+
+        Self {
+            root: obj,
+            children: Vec::with_capacity(max_children),
+        }
+    }
+}
+
+fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
+    depth: usize,
+    reader: &mut OsmPbfReader<R>,
+    filter_obj: impl Fn(&OsmObj) -> bool,
+    db: &mut T,
+) {
+    // Store objects that have not finished being built yet
+    let mut pending: FxHashMap<OsmId, DepObj> = FxHashMap::default();
+
+    // Store dependancy of one object to another
+    let mut graph: FxHashMap<OsmId, Vec<OsmId>> = FxHashMap::default();
+
+    // Add next layers
+    for layer in 1..=depth {
+        teprintln!("Build graph layer {}", layer);
+        reader.rewind().expect("could not rewind PBF reader");
+
+        for obj in reader.par_iter() {
+            let obj: DepObj = obj.expect("could not read pbf").into();
+
+            // The first layer only consists of filtered objects
+            // Next layers include objects that are required by dependancy and not yet pending
+            let feasible = (layer == 1 && filter_obj(&obj.root))
+                || (layer > 1
+                    && graph.contains_key(&obj.root.id())
+                    && !pending.contains_key(&obj.root.id()));
+
+            if !feasible {
+                continue;
+            }
+
+            // Create dependancies to this object
+            for child in obj.expected_children() {
+                graph.entry(child).or_default().push(obj.root.id());
+            }
+
+            // Start a graph search from current node, which propagate on completed objects
+            let mut todo = vec![obj];
+
+            while let Some(mut obj) = todo.pop() {
+                if obj.is_complete() {
+                    obj.reorder();
+
+                    if let Some(parents_id) = graph.remove(&obj.root.id()) {
+                        for parent_id in parents_id {
+                            let mut parent_obj = {
+                                if let Some(parent_obj) = pending.remove(&parent_id) {
+                                    parent_obj
+                                } else {
+                                    let index_in_stack =
+                                        todo.iter().position(|x| x.root.id() == parent_id).unwrap();
+                                    todo.swap_remove(index_in_stack)
+                                }
+                            };
+                            parent_obj.children.push(obj.clone()); // TODO: AIE AIE AIE
+                            todo.push(parent_obj);
+                        }
+                    } else {
+                        // If this object has no parents it means that it was filtered in
+                        handle_obj(obj, db);
+                    }
+                } else {
+                    pending.insert(obj.root.id(), obj);
+                }
+            }
+        }
+    }
 }
 
 /// Function to generate a position for a **way**. If the **way** is only composed of one **node**,
@@ -214,17 +233,20 @@ fn get_nodes<T: CompatibleDB>(pbf_file: &Path, db: &mut T) {
 /// create a polygon and then get its centroid's latitude and longitude.
 ///
 /// In case of error when generating the polygon, it'll return `None`.
-fn get_way_lat_lon(sub_objs: &[&OsmObj]) -> Option<(f64, f64)> {
-    let nodes = sub_objs
+fn get_way_lat_lon(sub_objs: &[DepObj]) -> Option<(f64, f64)> {
+    let nodes: Vec<_> = sub_objs
         .iter()
-        .map(|x| match &**x {
-            OsmObj::Node(n) => n,
-            _ => panic!("nothing else than nodes should be in a way!"),
+        .map(|x| {
+            x.root
+                .node()
+                .expect("nothing else than nodes should be in a way!")
         })
-        .collect::<Vec<_>>();
-    if nodes.len() == 1 {
-        return Some((nodes[0].lat(), nodes[0].lon()));
+        .collect();
+
+    if let [node] = nodes[..] {
+        return Some((node.lat(), node.lon()));
     }
+
     let polygon = format!(
         "POLYGON(({}))",
         nodes
@@ -233,11 +255,13 @@ fn get_way_lat_lon(sub_objs: &[&OsmObj]) -> Option<(f64, f64)> {
             .collect::<Vec<_>>()
             .join(",")
     );
+
     if let Ok(geom) = Geometry::new_from_wkt(&polygon).and_then(|g| g.get_centroid()) {
         if let (Ok(lon), Ok(lat)) = (geom.get_x(), geom.get_y()) {
             return Some((lat, lon));
         };
     }
+
     None
 }
 
@@ -247,37 +271,27 @@ fn get_way_lat_lon(sub_objs: &[&OsmObj]) -> Option<(f64, f64)> {
 /// others into the provided `db` argument.
 ///
 /// The conditions are explained at the crate level.
-fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
-    match obj {
-        StoredObj::Node(n) => match &*n {
-            OsmObj::Node(n) => db.insert(new_address(&n.tags, n.lat(), n.lon())),
-            _ => unreachable!(),
-        },
-        StoredObj::Way(way, nodes) => {
-            if let Some((lat, lon)) = get_way_lat_lon(&nodes) {
-                db.insert(new_address(way.tags(), lat, lon));
+fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T) {
+    match obj.root {
+        OsmObj::Node(n) => db.insert(new_address(&n.tags, n.lat(), n.lon())),
+        OsmObj::Way(way) => {
+            if let Some((lat, lon)) = get_way_lat_lon(&obj.children) {
+                db.insert(new_address(&way.tags, lat, lon))
             }
         }
-        StoredObj::Relation(r, objs) => {
-            let addr_name = match r.tags().iter().find(|t| t.0 == "name").map(|t| t.1) {
-                Some(addr) => addr,
-                None => unreachable!(),
-            };
-            for sub_obj in objs {
-                match sub_obj {
-                    StoredObj::Node(n) if n.tags().iter().any(is_valid_housenumber_tag) => {
-                        match &*n {
-                            OsmObj::Node(n) => {
-                                let mut addr = new_address(&n.tags, n.lat(), n.lon());
-                                addr.street = Some(addr_name.clone());
-                                db.insert(addr);
-                            }
-                            _ => unreachable!(),
-                        }
+        OsmObj::Relation(r) => {
+            let addr_name = r.tags.iter().find(|t| t.0 == "name").unwrap().1;
+
+            for sub_obj in obj.children {
+                match sub_obj.root {
+                    OsmObj::Node(n) if n.tags.iter().any(is_valid_housenumber_tag) => {
+                        let mut addr = new_address(&n.tags, n.lat(), n.lon());
+                        addr.street = Some(addr_name.clone());
+                        db.insert(addr);
                     }
-                    StoredObj::Way(w, nodes) if w.tags().iter().any(is_valid_housenumber_tag) => {
-                        if let Some((lat, lon)) = get_way_lat_lon(&nodes) {
-                            let mut addr = new_address(w.tags(), lat, lon);
+                    OsmObj::Way(w) if w.tags.iter().any(is_valid_housenumber_tag) => {
+                        if let Some((lat, lon)) = get_way_lat_lon(&sub_obj.children) {
+                            let mut addr = new_address(&w.tags, lat, lon);
                             addr.street = Some(addr_name.clone());
                             db.insert(addr);
                         }
@@ -305,16 +319,49 @@ fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
 /// import_addresses("some_file.pbf".as_ref(), "nodes.db".as_ref(), &mut db);
 /// ```
 pub fn import_addresses<T: CompatibleDB>(pbf_file: &Path, db: &mut T) {
-    let count_before = db.get_nb_addresses();
+    let filter_obj = |obj: &OsmObj| match obj {
+        OsmObj::Node(n) => {
+            n.tags.iter().any(is_valid_housenumber_tag)
+                && n.tags.iter().any(|x| x.0 == "addr:street")
+        }
+        OsmObj::Way(w) => {
+            !w.nodes.is_empty()
+                && w.tags.iter().any(is_valid_housenumber_tag)
+                && w.tags.iter().any(|x| x.0 == "addr:street")
+        }
+        OsmObj::Relation(r) => {
+            !r.refs.is_empty()
+                && r.tags
+                    .iter()
+                    .any(|x| x.0 == "type" && x.1 == "associatedStreet")
+                && r.tags.iter().any(|x| x.0 == "name")
+        }
+    };
 
-    get_nodes(pbf_file, db);
-
-    let count_after = db.get_nb_addresses();
-    tprintln!(
-        "[OSM] Added {} addresses (total: {})",
-        count_after - count_before,
-        count_after
+    // Init reader
+    let file = BufReader::with_capacity(
+        PBF_BUFFER_SIZE,
+        File::open(&pbf_file)
+            .unwrap_or_else(|err| panic!("Failed to open file {:?}: {}", pbf_file, err)),
     );
+
+    let mut reader = OsmPbfReader::new(file);
+
+    // Build graph
+    let _graph = build_graph(3, &mut reader, filter_obj, db);
+
+    // tprintln!("Graph size: {}", graph.len());
+    //
+    // let count_before = db.get_nb_addresses();
+    //
+    // get_nodes(pbf_file, db);
+    //
+    // let count_after = db.get_nb_addresses();
+    // tprintln!(
+    //     "[OSM] Added {} addresses (total: {})",
+    //     count_after - count_before,
+    //     count_after
+    // );
 }
 
 fn is_valid_housenumber_tag(tag_kv: (&String, &String)) -> bool {
