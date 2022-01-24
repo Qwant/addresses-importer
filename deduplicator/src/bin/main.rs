@@ -47,10 +47,6 @@ struct Params {
     #[structopt(long)]
     skip_source_filters: bool,
 
-    /// Path for the temporary DB built during OSM imports.
-    #[structopt(long, default_value = "nodes.db")]
-    nodes_db: PathBuf,
-
     /// Path for output database.
     #[structopt(long, default_value = "addresses.db")]
     output_db: PathBuf,
@@ -151,7 +147,7 @@ fn main() -> rusqlite::Result<()> {
         let mut db = deduplication.get_db_inserter(filter, ranking)?;
 
         match source {
-            Source::Osm => importer_osm::import_addresses(&path, &params.nodes_db, &mut db),
+            Source::Osm => importer_osm::import_addresses(&path, &mut db),
             Source::OpenAddress => importer_openaddresses::import_addresses(path, &mut db),
             Source::Bano => importer_bano::import_addresses(path, &mut db),
         }

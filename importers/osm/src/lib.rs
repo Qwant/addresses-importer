@@ -18,6 +18,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek};
 use std::path::Path;
+use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use geos::Geometry;
@@ -28,6 +29,18 @@ use tools::{teprintln, Address, CompatibleDB};
 
 /// Size of the read buffer put on top of the input PBF file
 const PBF_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
+
+/// Used to make the stored elements in the first lighter by removing all the unused tags.
+const TAGS_TO_KEEP: &[&str] = &[
+    "addr:housenumber",
+    "addr:street",
+    "addr:unit",
+    "addr:city",
+    "addr:district",
+    "addr:region",
+    "addr:postcode",
+    "name",
+];
 
 const MAX_VALID_HOUSENUMBER_LENGTH: usize = 8;
 
@@ -89,7 +102,7 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
 /// Type used to pack an object with its dependancies.
 #[derive(Clone, Debug)]
 struct DepObj {
-    root: OsmObj,
+    root: Rc<OsmObj>,
     children: Vec<DepObj>,
 }
 
@@ -114,36 +127,22 @@ impl DepObj {
 
     /// Reorder children with respect to OSM specified order.
     fn reorder(&mut self) {
+        let as_map: FxHashMap<OsmId, DepObj> = (self.children)
+            .drain(..)
+            .map(|obj| (obj.root.id(), obj))
+            .collect();
+
+        self.children = self
+            .expected_children()
+            .map(|id| as_map[&id].clone())
+            .collect();
+
         assert!(self.is_complete());
-        let len = self.children.len();
-
-        let mut old_children = std::mem::take(&mut self.children);
-        let mut new_children = Vec::with_capacity(len);
-
-        new_children.extend(self.expected_children().into_iter().map(move |obj_id| {
-            let child_pos = old_children
-                .iter()
-                .position(|obj| obj.root.id() == obj_id)
-                .unwrap();
-
-            old_children.swap_remove(child_pos)
-        }));
-
-        self.children = new_children;
-
-        // let index: FxHashMap<OsmId, usize> = self
-        //     .expected_children()
-        //     .enumerate()
-        //     .map(|(pos, obj)| (obj, pos))
-        //     .collect();
-        //
-        // self.children
-        //     .sort_unstable_by_key(|obj| index[&obj.root.id()]);
     }
 }
 
 impl From<OsmObj> for DepObj {
-    fn from(obj: OsmObj) -> Self {
+    fn from(mut obj: OsmObj) -> Self {
         let max_children = {
             match &obj {
                 OsmObj::Node(_) => 0,
@@ -152,8 +151,17 @@ impl From<OsmObj> for DepObj {
             }
         };
 
+        let tags = match &mut obj {
+            OsmObj::Node(n) => &mut n.tags,
+            OsmObj::Way(w) => &mut w.tags,
+            OsmObj::Relation(r) => &mut r.tags,
+        };
+
+        tags.retain(|k, _| TAGS_TO_KEEP.contains(&k.as_str()));
+        tags.shrink_to_fit();
+
         Self {
-            root: obj,
+            root: Rc::new(obj),
             children: Vec::with_capacity(max_children),
         }
     }
@@ -177,18 +185,19 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
         reader.rewind().expect("could not rewind PBF reader");
 
         for obj in reader.par_iter() {
-            let obj: DepObj = obj.expect("could not read pbf").into();
+            let obj = obj.expect("could not read pbf");
 
             // The first layer only consists of filtered objects
             // Next layers include objects that are required by dependancy and not yet pending
-            let feasible = (layer == 1 && filter_obj(&obj.root))
-                || (layer > 1
-                    && graph.contains_key(&obj.root.id())
-                    && !pending.contains_key(&obj.root.id()));
+            let feasible = (layer == 1 && filter_obj(&obj))
+                || (layer > 1 && graph.contains_key(&obj.id()) && !pending.contains_key(&obj.id()));
 
             if !feasible {
                 continue;
             }
+
+            // Convert into internal object format
+            let obj: DepObj = obj.into();
 
             // Create dependancies to this object
             for child in obj.expected_children() {
@@ -213,7 +222,10 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
                                     todo.swap_remove(index_in_stack)
                                 }
                             };
-                            parent_obj.children.push(obj.clone()); // TODO: AIE AIE AIE
+
+                            // Note that this clone may be OK because repeating child will normaly
+                            // only happen for closed ways.
+                            parent_obj.children.push(obj.clone());
                             todo.push(parent_obj);
                         }
                     } else {
@@ -272,7 +284,7 @@ fn get_way_lat_lon(sub_objs: &[DepObj]) -> Option<(f64, f64)> {
 ///
 /// The conditions are explained at the crate level.
 fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T) {
-    match obj.root {
+    match obj.root.as_ref() {
         OsmObj::Node(n) => db.insert(new_address(&n.tags, n.lat(), n.lon())),
         OsmObj::Way(way) => {
             if let Some((lat, lon)) = get_way_lat_lon(&obj.children) {
@@ -283,7 +295,7 @@ fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T) {
             let addr_name = r.tags.iter().find(|t| t.0 == "name").unwrap().1;
 
             for sub_obj in obj.children {
-                match sub_obj.root {
+                match sub_obj.root.as_ref() {
                     OsmObj::Node(n) if n.tags.iter().any(is_valid_housenumber_tag) => {
                         let mut addr = new_address(&n.tags, n.lat(), n.lon());
                         addr.street = Some(addr_name.clone());
