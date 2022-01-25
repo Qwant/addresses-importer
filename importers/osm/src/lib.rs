@@ -18,7 +18,6 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek};
 use std::path::Path;
-use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use geos::Geometry;
@@ -104,7 +103,7 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
 /// Type used to pack an object with its dependancies.
 #[derive(Clone, Debug)]
 struct DepObj {
-    root: Rc<OsmObj>,
+    root: OsmObj,
     children: Vec<DepObj>,
 }
 
@@ -129,17 +128,16 @@ impl DepObj {
 
     /// Reorder children with respect to OSM specified order.
     fn reorder(&mut self) {
-        let as_map: FxHashMap<OsmId, DepObj> = (self.children)
-            .drain(..)
-            .map(|obj| (obj.root.id(), obj))
-            .collect();
+        let mut as_map: FxHashMap<OsmId, Vec<DepObj>> = FxHashMap::default();
+
+        for obj in self.children.drain(..) {
+            as_map.entry(obj.root.id()).or_default().push(obj);
+        }
 
         self.children = self
             .expected_children()
-            .map(|id| as_map[&id].clone())
+            .map(move |id| as_map.get_mut(&id).unwrap().pop().unwrap())
             .collect();
-
-        assert!(self.is_complete());
     }
 }
 
@@ -179,7 +177,7 @@ impl TryFrom<OsmObj> for DepObj {
         };
 
         Ok(Self {
-            root: Rc::new(obj),
+            root: obj,
             children: Vec::with_capacity(max_children),
         })
     }
@@ -251,8 +249,8 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
                                 }
                             };
 
-                            // Note that this clone may be OK because repeating child will normaly
-                            // only happen for closed ways.
+                            // Note that this clone should be OK because repeating child will
+                            // normally only happen for closed ways.
                             parent_obj.children.push(obj.clone());
                             todo.push(parent_obj);
                         }
@@ -323,7 +321,7 @@ fn get_way_lat_lon(sub_objs: &[DepObj]) -> Option<(f64, f64)> {
 ///
 /// The conditions are explained at the crate level.
 fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T) {
-    match obj.root.as_ref() {
+    match obj.root {
         OsmObj::Node(n) => db.insert(new_address(&n.tags, n.lat(), n.lon())),
         OsmObj::Way(way) => {
             if let Some((lat, lon)) = get_way_lat_lon(&obj.children) {
@@ -334,7 +332,7 @@ fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T) {
             let addr_name = r.tags.iter().find(|t| t.0 == "name").unwrap().1;
 
             for sub_obj in obj.children {
-                match sub_obj.root.as_ref() {
+                match sub_obj.root {
                     OsmObj::Node(n) if n.tags.iter().any(is_valid_housenumber_tag) => {
                         let mut addr = new_address(&n.tags, n.lat(), n.lon());
                         addr.street = Some(addr_name.clone());
