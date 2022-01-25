@@ -24,7 +24,7 @@ use geos::Geometry;
 use osmpbfreader::objects::{OsmId, Tags};
 use osmpbfreader::{OsmObj, OsmPbfReader};
 
-use tools::{teprint, Address, CompatibleDB};
+use tools::{teprint, tprintln, Address, CompatibleDB};
 
 /// Size of the read buffer put on top of the input PBF file
 const PBF_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
@@ -100,7 +100,7 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
     addr
 }
 
-/// Type used to pack an object with its dependencies.
+/// Pack an OSM object together with the objects it depends on.
 #[derive(Clone, Debug)]
 struct DepObj {
     root: OsmObj,
@@ -108,7 +108,7 @@ struct DepObj {
 }
 
 impl DepObj {
-    /// Check if all the children for this node have been extracted from OSM.
+    /// Check if all the children for this node have been extracted from OSM file.
     fn is_complete(&self) -> bool {
         self.children.len() == self.children.capacity()
     }
@@ -126,20 +126,38 @@ impl DepObj {
         way_children.chain(rel_children)
     }
 
-    /// Reorder children with respect to OSM specified order.
-    fn reorder(&mut self) {
+    /// Reorder children with respect to OSM specified order, then it will
+    /// remove the list of children ID's from the original object in order to
+    /// free some RAM.
+    ///
+    /// This method must only be used when an object is complete as it would
+    /// overwise destroy objects hierarchy.
+    fn reorder_and_cleanup_children(&mut self) {
+        // Execute some kind of radix sort: first we order objects by id
         let mut as_map: FxHashMap<OsmId, Vec<DepObj>> = FxHashMap::default();
 
         for obj in self.children.drain(..) {
             as_map.entry(obj.root.id()).or_default().push(obj);
         }
 
+        // Then we fetch objects in order based on their ID
         self.children = self
             .expected_children()
             .filter_map(move |id| as_map.get_mut(&id)?.pop())
             .collect();
 
-        self.children.shrink_to_fit()
+        self.children.shrink_to_fit();
+
+        // Cleanup original object dependencies
+        match &mut self.root {
+            OsmObj::Node(_) => {}
+            OsmObj::Way(w) => {
+                std::mem::take(&mut w.nodes);
+            }
+            OsmObj::Relation(r) => {
+                std::mem::take(&mut r.refs);
+            }
+        }
     }
 }
 
@@ -175,10 +193,10 @@ impl From<OsmObj> for DepObj {
     }
 }
 
-/// Compute depth of given object in dependency graph.
+/// Compute depth of given object in dependency graph: an object with no parent
+/// is of depth 1, its child are of depth 2, etc...
 fn object_depth(obj_id: OsmId, deps_graph: &FxHashMap<OsmId, Vec<OsmId>>) -> usize {
-    deps_graph
-        .get(&obj_id)
+    (deps_graph.get(&obj_id))
         .into_iter()
         .flatten()
         .map(|parent_id| 1 + object_depth(*parent_id, deps_graph))
@@ -186,36 +204,54 @@ fn object_depth(obj_id: OsmId, deps_graph: &FxHashMap<OsmId, Vec<OsmId>>) -> usi
         .unwrap_or(1)
 }
 
-fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
+/// Fetch all objects from input PBF reader. The objects that validate the function `filter_obj`
+/// will be passed into `handle_obj` with their dependencies.
+///
+/// This is done by maintaining a list of objects into memory together with the graph of the
+/// objects they depend on. The PBF files will be read sequentially several times until all
+/// dependencies are resolved. To preserve from very high memory usage, the objects are deallocated
+/// as soon as all their dependencies are resolved.
+fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
     max_depth: usize,
     reader: &mut OsmPbfReader<R>,
     filter_obj: impl Fn(&OsmObj) -> bool,
     db: &mut T,
 ) {
+    // Simple counter to objects extracted so far
+    let mut count_objs: u64 = 0;
+
     // Store objects that have not finished being built yet
     let mut pending: FxHashMap<OsmId, DepObj> = FxHashMap::default();
 
     // Store dependancy of one object to another
     let mut deps_graph: FxHashMap<OsmId, Vec<OsmId>> = FxHashMap::default();
 
-    let mut nb_objs: u64 = 0;
+    // ID of the last explicitly imported object (excludes objects that are picked as a dependancy)
     let mut last_imported_object = None;
+
+    // When this is true, then we import addresses that validate the filter, this is set to false
+    // when the graph may take too much RAM
     let mut import_first_layer = true;
+
+    // Check if current iteration made progress
     let mut made_progress = true;
 
-    'read_pbf: while made_progress {
+    while made_progress {
         teprint!("Build graph layer ... ");
         made_progress = false;
         reader.rewind().expect("could not rewind PBF reader");
 
-        for obj in reader.par_iter() {
+        'read_pbf: for obj in reader.par_iter() {
             let obj = obj.expect("could not read pbf");
 
-            // The first layer only consists of filtered objects
-            // Next layers include objects that are required by dependency and not yet pending
+            // The first layer only consists of filtered objects. Next layers include objects that
+            // are required by dependency and not yet pending
             let feasible = (import_first_layer && filter_obj(&obj))
                 || (deps_graph.contains_key(&obj.id()) && !pending.contains_key(&obj.id()));
 
+            // Keep track of the last explicitly imported object while import_first_layer is true.
+            // Then, it is set to true when the run reaches a section of the file that is not
+            // imported yet.
             if import_first_layer {
                 last_imported_object = Some(obj.id());
             } else if last_imported_object == Some(obj.id()) {
@@ -230,7 +266,7 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
             let obj: DepObj = obj.into();
             made_progress = true;
 
-            // Create dependencies to this object
+            // Create dependencies to this object, if they are within selected depth
             if object_depth(obj.root.id(), &deps_graph) < max_depth {
                 for child in obj.expected_children() {
                     deps_graph.entry(child).or_default().push(obj.root.id());
@@ -242,9 +278,10 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
 
             while let Some(mut obj) = todo.pop() {
                 if obj.is_complete() || object_depth(obj.root.id(), &deps_graph) == max_depth {
-                    obj.reorder();
+                    obj.reorder_and_cleanup_children();
 
                     if let Some(parents_id) = deps_graph.remove(&obj.root.id()) {
+                        // Insert the object in its parents
                         for parent_id in parents_id {
                             let mut parent_obj = {
                                 if let Some(parent_obj) = pending.remove(&parent_id) {
@@ -262,9 +299,10 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
                             todo.push(parent_obj);
                         }
                     } else {
-                        // If this object has no parents it means that it was filtered in
+                        // If this object has no parents it means that it was selected by input
+                        // filter and must be handled
                         handle_obj(obj, db);
-                        nb_objs += 1;
+                        count_objs += 1;
                     }
                 } else {
                     pending.insert(obj.root.id(), obj);
@@ -273,15 +311,7 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
 
             // Reset run if too many items are in dependencies
             if import_first_layer && pending.len() >= 5_000_000 {
-                eprintln!(
-                    "{} pending, {} deps, objs: {}",
-                    pending.len(),
-                    deps_graph.len(),
-                    nb_objs
-                );
-
-                import_first_layer = false;
-                continue 'read_pbf;
+                break 'read_pbf;
             }
         }
 
@@ -292,7 +322,7 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
                 "{} pending, {} deps, objs: {}",
                 pending.len(),
                 deps_graph.len(),
-                nb_objs
+                count_objs
             );
         } else {
             eprintln!("done");
@@ -393,6 +423,8 @@ fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T) {
 /// import_addresses("some_file.pbf".as_ref(), "nodes.db".as_ref(), &mut db);
 /// ```
 pub fn import_addresses<T: CompatibleDB>(pbf_file: &Path, db: &mut T) {
+    let count_before = db.get_nb_addresses();
+
     let filter_obj = |obj: &OsmObj| match obj {
         OsmObj::Node(n) => {
             n.tags.iter().any(is_valid_housenumber_tag)
@@ -420,22 +452,14 @@ pub fn import_addresses<T: CompatibleDB>(pbf_file: &Path, db: &mut T) {
     );
 
     let mut reader = OsmPbfReader::new(file);
+    fetch_objects(3, &mut reader, filter_obj, db);
 
-    // Build graph
-    build_graph(3, &mut reader, filter_obj, db);
-
-    // tprintln!("Graph size: {}", graph.len());
-    //
-    // let count_before = db.get_nb_addresses();
-    //
-    // get_nodes(pbf_file, db);
-    //
-    // let count_after = db.get_nb_addresses();
-    // tprintln!(
-    //     "[OSM] Added {} addresses (total: {})",
-    //     count_after - count_before,
-    //     count_after
-    // );
+    let count_after = db.get_nb_addresses();
+    tprintln!(
+        "[OSM] Added {} addresses (total: {})",
+        count_after - count_before,
+        count_after
+    );
 }
 
 fn is_valid_housenumber_tag(tag_kv: (&String, &String)) -> bool {
