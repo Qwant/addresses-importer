@@ -100,7 +100,7 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
     addr
 }
 
-/// Type used to pack an object with its dependancies.
+/// Type used to pack an object with its dependencies.
 #[derive(Clone, Debug)]
 struct DepObj {
     root: OsmObj,
@@ -136,17 +136,15 @@ impl DepObj {
 
         self.children = self
             .expected_children()
-            .map(move |id| as_map.get_mut(&id).unwrap().pop().unwrap())
+            .filter_map(move |id| as_map.get_mut(&id)?.pop())
             .collect();
+
+        self.children.shrink_to_fit()
     }
 }
 
-impl TryFrom<OsmObj> for DepObj {
-    type Error = ();
-
-    fn try_from(mut obj: OsmObj) -> Result<Self, ()> {
-        let is_node = obj.is_node();
-
+impl From<OsmObj> for DepObj {
+    fn from(mut obj: OsmObj) -> Self {
         let tags_to_keep = match obj {
             OsmObj::Node(_) => NODE_TAGS_TO_KEEP,
             OsmObj::Way(_) => WAY_TAGS_TO_KEEP,
@@ -160,12 +158,6 @@ impl TryFrom<OsmObj> for DepObj {
         };
 
         tags.retain(|k, _| tags_to_keep.contains(&k.as_str()));
-
-        // Empty nodes can be used in ways for positioning
-        if !is_node && tags.is_empty() {
-            return Err(());
-        }
-
         tags.shrink_to_fit();
 
         let max_children = {
@@ -176,15 +168,26 @@ impl TryFrom<OsmObj> for DepObj {
             }
         };
 
-        Ok(Self {
+        Self {
             root: obj,
             children: Vec::with_capacity(max_children),
-        })
+        }
     }
 }
 
+/// Compute depth of given object in dependency graph.
+fn object_depth(obj_id: OsmId, deps_graph: &FxHashMap<OsmId, Vec<OsmId>>) -> usize {
+    deps_graph
+        .get(&obj_id)
+        .into_iter()
+        .flatten()
+        .map(|parent_id| 1 + object_depth(*parent_id, deps_graph))
+        .min()
+        .unwrap_or(1)
+}
+
 fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
-    depth: usize,
+    max_depth: usize,
     reader: &mut OsmPbfReader<R>,
     filter_obj: impl Fn(&OsmObj) -> bool,
     db: &mut T,
@@ -195,36 +198,40 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
     // Store dependancy of one object to another
     let mut deps_graph: FxHashMap<OsmId, Vec<OsmId>> = FxHashMap::default();
 
-    // Add next layers
-    for layer in 1..=depth {
-        teprint!("Build graph layer {layer}/{depth} ... ");
+    let mut nb_objs: u64 = 0;
+    let mut last_imported_object = None;
+    let mut import_first_layer = true;
+    let mut made_progress = true;
+
+    'read_pbf: while made_progress {
+        teprint!("Build graph layer ... ");
+        made_progress = false;
         reader.rewind().expect("could not rewind PBF reader");
 
         for obj in reader.par_iter() {
             let obj = obj.expect("could not read pbf");
 
             // The first layer only consists of filtered objects
-            // Next layers include objects that are required by dependancy and not yet pending
-            let feasible = (layer == 1 && filter_obj(&obj))
-                || (layer > 1
-                    && deps_graph.contains_key(&obj.id())
-                    && !pending.contains_key(&obj.id()));
+            // Next layers include objects that are required by dependency and not yet pending
+            let feasible = (import_first_layer && filter_obj(&obj))
+                || (deps_graph.contains_key(&obj.id()) && !pending.contains_key(&obj.id()));
+
+            if import_first_layer {
+                last_imported_object = Some(obj.id());
+            } else if last_imported_object == Some(obj.id()) {
+                import_first_layer = true;
+            }
 
             if !feasible {
                 continue;
             }
 
             // Convert into internal object format
-            let obj: DepObj = {
-                if let Ok(obj) = obj.try_into() {
-                    obj
-                } else {
-                    continue;
-                }
-            };
+            let obj: DepObj = obj.into();
+            made_progress = true;
 
             // Create dependencies to this object
-            if layer < depth {
+            if object_depth(obj.root.id(), &deps_graph) < max_depth {
                 for child in obj.expected_children() {
                     deps_graph.entry(child).or_default().push(obj.root.id());
                 }
@@ -234,7 +241,7 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
             let mut todo = vec![obj];
 
             while let Some(mut obj) = todo.pop() {
-                if obj.is_complete() {
+                if obj.is_complete() || object_depth(obj.root.id(), &deps_graph) == max_depth {
                     obj.reorder();
 
                     if let Some(parents_id) = deps_graph.remove(&obj.root.id()) {
@@ -257,24 +264,42 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
                     } else {
                         // If this object has no parents it means that it was filtered in
                         handle_obj(obj, db);
+                        nb_objs += 1;
                     }
                 } else {
                     pending.insert(obj.root.id(), obj);
                 }
             }
 
-            // Free some memory if the data structures have shrunk consequently
-            if 4 * pending.len() < pending.capacity() {
-                pending.shrink_to(2 * pending.len());
-            }
+            // Reset run if too many items are in dependencies
+            if import_first_layer && pending.len() >= 5_000_000 {
+                eprintln!(
+                    "{} pending, {} deps, objs: {}",
+                    pending.len(),
+                    deps_graph.len(),
+                    nb_objs
+                );
 
-            if 4 * deps_graph.len() < deps_graph.capacity() {
-                deps_graph.shrink_to(2 * deps_graph.len());
+                import_first_layer = false;
+                continue 'read_pbf;
             }
         }
 
-        eprintln!("{} pending, {} deps", pending.len(), deps_graph.len());
+        import_first_layer = false;
+
+        if made_progress {
+            eprintln!(
+                "{} pending, {} deps, objs: {}",
+                pending.len(),
+                deps_graph.len(),
+                nb_objs
+            );
+        } else {
+            eprintln!("done");
+        }
     }
+
+    // eprintln!("{:#?}", pending);
 }
 
 /// Function to generate a position for a **way**. If the **way** is only composed of one **node**,
