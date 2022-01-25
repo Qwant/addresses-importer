@@ -420,7 +420,7 @@ fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T) {
 /// use osm::import_addresses;
 ///
 /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
-/// import_addresses("some_file.pbf".as_ref(), "nodes.db".as_ref(), &mut db);
+/// import_addresses("some_file.pbf".as_ref(), &mut db);
 /// ```
 pub fn import_addresses<T: CompatibleDB>(pbf_file: &Path, db: &mut T) {
     let count_before = db.get_nb_addresses();
@@ -469,20 +469,23 @@ fn is_valid_housenumber_tag(tag_kv: (&String, &String)) -> bool {
     key == "addr:housenumber" && value.len() <= MAX_VALID_HOUSENUMBER_LENGTH
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use tools::*;
-//
-//     #[test]
-//     fn check_relations() {
-//         let pbf_file = "test-files/osm_input.pbf";
-//         let db_file = "check_relations.db";
-//
-//         let mut db = DB::new(db_file, 0, true).expect("Failed to initialize DB");
-//         assert_eq!(db.get_nb_addresses(), 361);
-//         let addr = db.get_address(2, "Place de la Forêt de Cruye");
-//         assert_eq!(addr.len(), 1);
-//         let _ = fs::remove_file(db_file); // we ignore any potential error
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tools::*;
+
+    #[test]
+    fn check_relations() {
+        let db_file = "check_relations.db";
+        let mut db = DB::new(db_file, 0, true).expect("Failed to initialize DB");
+
+        let pbf_file = "test-files/osm_input.pbf";
+        import_addresses(pbf_file.as_ref(), &mut db);
+        assert_eq!(db.get_nb_addresses(), 361);
+
+        let addr = db.get_address(2, "Place de la Forêt de Cruye");
+        assert_eq!(addr.len(), 1);
+
+        let _ = std::fs::remove_file(db_file); // we ignore any potential error
+    }
+}
