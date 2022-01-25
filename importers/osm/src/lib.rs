@@ -25,13 +25,15 @@ use geos::Geometry;
 use osmpbfreader::objects::{OsmId, Tags};
 use osmpbfreader::{OsmObj, OsmPbfReader};
 
-use tools::{teprintln, Address, CompatibleDB};
+use tools::{teprint, Address, CompatibleDB};
 
 /// Size of the read buffer put on top of the input PBF file
 const PBF_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
 /// Used to make the stored elements in the first lighter by removing all the unused tags.
-const TAGS_TO_KEEP: &[&str] = &[
+const REL_TAGS_TO_KEEP: &[&str] = &["name"];
+const WAY_TAGS_TO_KEEP: &[&str] = &["addr:housenumber", "addr:street"];
+const NODE_TAGS_TO_KEEP: &[&str] = &[
     "addr:housenumber",
     "addr:street",
     "addr:unit",
@@ -141,14 +143,16 @@ impl DepObj {
     }
 }
 
-impl From<OsmObj> for DepObj {
-    fn from(mut obj: OsmObj) -> Self {
-        let max_children = {
-            match &obj {
-                OsmObj::Node(_) => 0,
-                OsmObj::Way(w) => w.nodes.len(),
-                OsmObj::Relation(r) => r.refs.len(),
-            }
+impl TryFrom<OsmObj> for DepObj {
+    type Error = ();
+
+    fn try_from(mut obj: OsmObj) -> Result<Self, ()> {
+        let is_node = obj.is_node();
+
+        let tags_to_keep = match obj {
+            OsmObj::Node(_) => NODE_TAGS_TO_KEEP,
+            OsmObj::Way(_) => WAY_TAGS_TO_KEEP,
+            OsmObj::Relation(_) => REL_TAGS_TO_KEEP,
         };
 
         let tags = match &mut obj {
@@ -157,13 +161,27 @@ impl From<OsmObj> for DepObj {
             OsmObj::Relation(r) => &mut r.tags,
         };
 
-        tags.retain(|k, _| TAGS_TO_KEEP.contains(&k.as_str()));
+        tags.retain(|k, _| tags_to_keep.contains(&k.as_str()));
+
+        // Empty nodes can be used in ways for positioning
+        if !is_node && tags.is_empty() {
+            return Err(());
+        }
+
         tags.shrink_to_fit();
 
-        Self {
+        let max_children = {
+            match &obj {
+                OsmObj::Node(_) => 0,
+                OsmObj::Way(w) => w.nodes.len(),
+                OsmObj::Relation(r) => r.refs.len(),
+            }
+        };
+
+        Ok(Self {
             root: Rc::new(obj),
             children: Vec::with_capacity(max_children),
-        }
+        })
     }
 }
 
@@ -177,11 +195,11 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
     let mut pending: FxHashMap<OsmId, DepObj> = FxHashMap::default();
 
     // Store dependancy of one object to another
-    let mut graph: FxHashMap<OsmId, Vec<OsmId>> = FxHashMap::default();
+    let mut deps_graph: FxHashMap<OsmId, Vec<OsmId>> = FxHashMap::default();
 
     // Add next layers
     for layer in 1..=depth {
-        teprintln!("Build graph layer {}", layer);
+        teprint!("Build graph layer {layer}/{depth} ... ");
         reader.rewind().expect("could not rewind PBF reader");
 
         for obj in reader.par_iter() {
@@ -190,18 +208,28 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
             // The first layer only consists of filtered objects
             // Next layers include objects that are required by dependancy and not yet pending
             let feasible = (layer == 1 && filter_obj(&obj))
-                || (layer > 1 && graph.contains_key(&obj.id()) && !pending.contains_key(&obj.id()));
+                || (layer > 1
+                    && deps_graph.contains_key(&obj.id())
+                    && !pending.contains_key(&obj.id()));
 
             if !feasible {
                 continue;
             }
 
             // Convert into internal object format
-            let obj: DepObj = obj.into();
+            let obj: DepObj = {
+                if let Ok(obj) = obj.try_into() {
+                    obj
+                } else {
+                    continue;
+                }
+            };
 
-            // Create dependancies to this object
-            for child in obj.expected_children() {
-                graph.entry(child).or_default().push(obj.root.id());
+            // Create dependencies to this object
+            if layer < depth {
+                for child in obj.expected_children() {
+                    deps_graph.entry(child).or_default().push(obj.root.id());
+                }
             }
 
             // Start a graph search from current node, which propagate on completed objects
@@ -211,7 +239,7 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
                 if obj.is_complete() {
                     obj.reorder();
 
-                    if let Some(parents_id) = graph.remove(&obj.root.id()) {
+                    if let Some(parents_id) = deps_graph.remove(&obj.root.id()) {
                         for parent_id in parents_id {
                             let mut parent_obj = {
                                 if let Some(parent_obj) = pending.remove(&parent_id) {
@@ -236,7 +264,18 @@ fn build_graph<R: BufRead + Seek, T: CompatibleDB>(
                     pending.insert(obj.root.id(), obj);
                 }
             }
+
+            // Free some memory if the data structures have shrunk consequently
+            if 4 * pending.len() < pending.capacity() {
+                pending.shrink_to(2 * pending.len());
+            }
+
+            if 4 * deps_graph.len() < deps_graph.capacity() {
+                deps_graph.shrink_to(2 * deps_graph.len());
+            }
         }
+
+        eprintln!("{} pending, {} deps", pending.len(), deps_graph.len());
     }
 }
 
@@ -360,7 +399,7 @@ pub fn import_addresses<T: CompatibleDB>(pbf_file: &Path, db: &mut T) {
     let mut reader = OsmPbfReader::new(file);
 
     // Build graph
-    let _graph = build_graph(3, &mut reader, filter_obj, db);
+    build_graph(3, &mut reader, filter_obj, db);
 
     // tprintln!("Graph size: {}", graph.len());
     //
