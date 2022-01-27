@@ -7,6 +7,7 @@ edition = "2021"
 [dependencies]
 rusqlite = "0.21"
 serde = { version = "1.0", features = ["derive"] }
+smartstring = "0.2"
 time = { version = "0.2", features = ["std"] }
 
 [lib]

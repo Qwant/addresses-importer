@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 bincode = "1.1"
+smartstring = "0.2"
 fxhash = "0.2"
 geos = "5.0"
 osmpbfreader = "0.13.4"

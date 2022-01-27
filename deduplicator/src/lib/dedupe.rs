@@ -41,16 +41,16 @@ static POSTAL_CLASSIFIER: sync::Lazy<rpostal::LanguageClassifier<'static>> =
 /// let addr_1 = Address {
 ///     lat: 48.8707572,
 ///     lon: 2.3047277,
-///     number: Some("32".to_string()),
-///     street: Some("av. des Champs Élysées".to_string()),
+///     number: Some("32".into()),
+///     street: Some("av. des Champs Élysées".into()),
 ///     ..Address::default()
 /// };
 ///
 /// let addr_2 = Address {
 ///     lat: 48.870,
 ///     lon: 2.304,
-///     number: Some("32".to_string()),
-///     street: Some("avenue des champs élysées".to_string()),
+///     number: Some("32".into()),
+///     street: Some("avenue des champs élysées".into()),
 ///     ..Address::default()
 /// };
 ///
@@ -111,16 +111,16 @@ pub fn hash_address(address: &Address) -> impl Iterator<Item = u64> {
 /// let addr_1 = Address {
 ///     lat: 48.8707572,
 ///     lon: 2.3047277,
-///     number: Some("32".to_string()),
-///     street: Some("av. des Champs Élysées".to_string()),
+///     number: Some("32".into()),
+///     street: Some("av. des Champs Élysées".into()),
 ///     ..Address::default()
 /// };
 ///
 /// let addr_2 = Address {
 ///     lat: 48.870,
 ///     lon: 2.304,
-///     number: Some("32".to_string()),
-///     street: Some("avenue des champs élysées".to_string()),
+///     number: Some("32".into()),
+///     street: Some("avenue des champs élysées".into()),
 ///     ..Address::default()
 /// };
 ///

@@ -233,8 +233,8 @@ impl DbHashes {
     ///
     /// {
     ///     let addr = Address {
-    ///         number: Some("24 bis".to_string()),
-    ///         street: Some("rue des serpentins".to_string()),
+    ///         number: Some("24 bis".into()),
+    ///         street: Some("rue des serpentins".into()),
     ///         ..Address::default()
     ///     };
     ///
@@ -393,13 +393,13 @@ impl<'c, 't> Inserter<'c, 't> {
         self.stmt_insert_address.execute(&[
             &address.lat as &dyn ToSql,
             &address.lon,
-            &address.number,
-            &address.street,
-            &address.unit,
-            &address.city,
-            &address.district,
-            &address.region,
-            &address.postcode,
+            &address.number.as_ref().map(|s| s.as_str()),
+            &address.street.as_ref().map(|s| s.as_str()),
+            &address.unit.as_ref().map(|s| s.as_str()),
+            &address.city.as_ref().map(|s| s.as_str()),
+            &address.district.as_ref().map(|s| s.as_str()),
+            &address.region.as_ref().map(|s| s.as_str()),
+            &address.postcode.as_ref().map(|s| s.as_str()),
             &rank,
         ])?;
         Ok(self.tran.last_insert_rowid())

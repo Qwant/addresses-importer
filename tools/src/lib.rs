@@ -1,8 +1,9 @@
 use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
+use smartstring::alias::String as SString;
 use std::fs;
 
 /// Returns a `String` representing the current time under the form "HH:MM:SS".
-pub fn get_time() -> String {
+pub fn get_time() -> std::string::String {
     let now = time::OffsetDateTime::now_utc();
     format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second())
 }
@@ -68,13 +69,13 @@ macro_rules! teprintln {
 pub struct Address {
     pub lat: f64,
     pub lon: f64,
-    pub number: Option<String>,
-    pub street: Option<String>,
-    pub unit: Option<String>,
-    pub city: Option<String>,
-    pub district: Option<String>,
-    pub region: Option<String>,
-    pub postcode: Option<String>,
+    pub number: Option<SString>,
+    pub street: Option<SString>,
+    pub unit: Option<SString>,
+    pub city: Option<SString>,
+    pub district: Option<SString>,
+    pub region: Option<SString>,
+    pub postcode: Option<SString>,
 }
 
 impl Address {
@@ -116,16 +117,19 @@ impl<'r> TryFrom<&Row<'r>> for Address {
     type Error = rusqlite::Error;
 
     fn try_from(row: &Row<'r>) -> Result<Self, Self::Error> {
+        let get_string =
+            |col| Ok::<_, Self::Error>(row.get::<_, Option<String>>(col)?.map(Into::into));
+
         Ok(Address {
             lat: row.get("lat")?,
             lon: row.get("lon")?,
-            number: row.get("number")?,
-            street: row.get("street")?,
-            unit: row.get("unit")?,
-            city: row.get("city")?,
-            district: row.get("district")?,
-            region: row.get("region")?,
-            postcode: row.get("postcode")?,
+            number: get_string("number")?,
+            street: get_string("street")?,
+            unit: get_string("unit")?,
+            city: get_string("city")?,
+            district: get_string("district")?,
+            region: get_string("region")?,
+            postcode: get_string("postcode")?,
         })
     }
 }
@@ -258,13 +262,13 @@ impl DB {
                     if let Err(e) = stmt.execute(&[
                         &obj.lat as &dyn ToSql,
                         &obj.lon,
-                        &obj.number,
-                        &obj.street,
-                        &obj.unit,
-                        &obj.city,
-                        &obj.district,
-                        &obj.region,
-                        &obj.postcode,
+                        &obj.number.as_ref().map(|s| s.as_str()),
+                        &obj.street.as_ref().map(|s| s.as_str()),
+                        &obj.unit.as_ref().map(|s| s.as_str()),
+                        &obj.city.as_ref().map(|s| s.as_str()),
+                        &obj.district.as_ref().map(|s| s.as_str()),
+                        &obj.region.as_ref().map(|s| s.as_str()),
+                        &obj.postcode.as_ref().map(|s| s.as_str()),
                     ]) {
                         Some((obj, e.to_string()))
                     } else {
@@ -295,13 +299,13 @@ impl DB {
                 stmt.execute(&[
                     &obj.lat as &dyn ToSql,
                     &obj.lon,
-                    &obj.number,
-                    &obj.street,
-                    &obj.unit,
-                    &obj.city,
-                    &obj.district,
-                    &obj.region,
-                    &obj.postcode,
+                    &obj.number.as_ref().map(|s| s.as_str()),
+                    &obj.street.as_ref().map(|s| s.as_str()),
+                    &obj.unit.as_ref().map(|s| s.as_str()),
+                    &obj.city.as_ref().map(|s| s.as_str()),
+                    &obj.district.as_ref().map(|s| s.as_str()),
+                    &obj.region.as_ref().map(|s| s.as_str()),
+                    &obj.postcode.as_ref().map(|s| s.as_str()),
                     &err,
                 ])
                 .expect("failed to insert into errors");
