@@ -195,13 +195,8 @@ impl From<OsmObj> for DepObj {
 
 /// Compute depth of given object in dependency graph: an object with no parent
 /// is of depth 1, its child are of depth 2, etc...
-fn object_depth(obj_id: OsmId, deps_graph: &FxHashMap<OsmId, Vec<OsmId>>) -> usize {
-    (deps_graph.get(&obj_id))
-        .into_iter()
-        .flatten()
-        .map(|parent_id| 1 + object_depth(*parent_id, deps_graph))
-        .min()
-        .unwrap_or(1)
+fn object_depth(obj_id: OsmId, deps_graph: &FxHashMap<OsmId, (u8, Vec<OsmId>)>) -> u8 {
+    deps_graph.get(&obj_id).map(|x| x.0).unwrap_or(1)
 }
 
 /// Fetch all objects from input PBF reader. The objects that validate the function `filter_obj`
@@ -212,7 +207,7 @@ fn object_depth(obj_id: OsmId, deps_graph: &FxHashMap<OsmId, Vec<OsmId>>) -> usi
 /// dependencies are resolved. To preserve from very high memory usage, the objects are deallocated
 /// as soon as all their dependencies are resolved.
 fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
-    max_depth: usize,
+    max_depth: u8,
     reader: &mut OsmPbfReader<R>,
     filter_obj: impl Fn(&OsmObj) -> bool,
     db: &mut T,
@@ -224,7 +219,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
     let mut pending: FxHashMap<OsmId, DepObj> = FxHashMap::default();
 
     // Store dependancy of one object to another
-    let mut deps_graph: FxHashMap<OsmId, Vec<OsmId>> = FxHashMap::default();
+    let mut deps_graph: FxHashMap<OsmId, (u8, Vec<OsmId>)> = FxHashMap::default();
 
     // ID of the last explicitly imported object (excludes objects that are picked as a dependancy)
     let mut last_imported_object = None;
@@ -269,7 +264,11 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
             // Create dependencies to this object, if they are within selected depth
             if object_depth(obj.root.id(), &deps_graph) < max_depth {
                 for child in obj.expected_children() {
-                    deps_graph.entry(child).or_default().push(obj.root.id());
+                    deps_graph
+                        .entry(child)
+                        .or_insert_with(|| (1, Vec::new()))
+                        .1
+                        .push(obj.root.id());
                 }
             }
 
@@ -280,7 +279,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
                 if obj.is_complete() || object_depth(obj.root.id(), &deps_graph) == max_depth {
                     obj.reorder_and_cleanup_children();
 
-                    if let Some(parents_id) = deps_graph.remove(&obj.root.id()) {
+                    if let Some((_, parents_id)) = deps_graph.remove(&obj.root.id()) {
                         // Insert the object in its parents
                         for parent_id in parents_id {
                             let mut parent_obj = {
