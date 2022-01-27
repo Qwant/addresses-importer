@@ -139,9 +139,9 @@ pub fn opt_field_compare<T>(
 /// use tools::Address;
 ///
 /// let address = Address {
-///     number: Some("54".to_string()),
-///     street: Some("rue des Koubis".to_string()),
-///     city: Some("Paris".to_string()),
+///     number: Some("54".into()),
+///     street: Some("rue des Koubis".into()),
+///     city: Some("Paris".into()),
 ///     ..Address::default()
 /// };
 ///

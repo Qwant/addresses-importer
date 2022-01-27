@@ -4,6 +4,7 @@ use std::io::BufReader;
 use std::path::Path;
 
 use csv::Reader;
+use smartstring::alias::String;
 use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
 
 use serde::{Deserialize, Serialize};

@@ -64,13 +64,13 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(file_path: P, db: &mut 
         db.insert(Address {
             lat: get_f64!(6, x),
             lon: get_f64!(7, x),
-            number: get!(1, x).map(|x| x.to_owned()),
-            street: get!(2, x).map(|x| x.to_owned()),
+            number: get!(1, x).map(|x| x.into()),
+            street: get!(2, x).map(|x| x.into()),
             unit: None,
-            city: get!(4, x).map(|x| x.to_owned()),
+            city: get!(4, x).map(|x| x.into()),
             district: None,
             region: None,
-            postcode: get!(3, x).map(|x| x.to_owned()),
+            postcode: get!(3, x).map(|x| x.into()),
         });
     }
 

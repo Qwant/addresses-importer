@@ -79,25 +79,25 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
     for (tag, value) in tags.iter() {
         match tag.as_str() {
             "addr:housenumber" => {
-                addr.number = Some(value.to_owned());
+                addr.number = Some(value.into());
             }
             "addr:street" => {
-                addr.street = Some(value.to_owned());
+                addr.street = Some(value.into());
             }
             "addr:unit" => {
-                addr.unit = Some(value.to_owned());
+                addr.unit = Some(value.into());
             }
             "addr:city" => {
-                addr.city = Some(value.to_owned());
+                addr.city = Some(value.into());
             }
             "addr:district" => {
-                addr.district = Some(value.to_owned());
+                addr.district = Some(value.into());
             }
             "addr:region" => {
-                addr.region = Some(value.to_owned());
+                addr.region = Some(value.into());
             }
             "addr:postcode" => {
-                addr.postcode = Some(value.to_owned());
+                addr.postcode = Some(value.into());
             }
             _ => {}
         }
@@ -401,7 +401,7 @@ fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T, override_street: Option<
     };
 
     if let Some(street) = override_street {
-        address.street = Some(street.to_string());
+        address.street = Some(street.into());
     }
 
     db.insert(address);
