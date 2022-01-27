@@ -301,7 +301,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
                     } else {
                         // If this object has no parents it means that it was selected by input
                         // filter and must be handled
-                        handle_obj(obj, db);
+                        handle_obj(obj, db, None);
                         count_objs += 1;
                     }
                 } else {
@@ -375,36 +375,34 @@ fn get_way_lat_lon(sub_objs: &[DepObj]) -> Option<(f64, f64)> {
 /// others into the provided `db` argument.
 ///
 /// The conditions are explained at the crate level.
-fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T) {
-    match obj.root {
-        OsmObj::Node(n) => db.insert(new_address(&n.tags, n.lat(), n.lon())),
-        OsmObj::Way(way) => {
-            if let Some((lat, lon)) = get_way_lat_lon(&obj.children) {
-                db.insert(new_address(&way.tags, lat, lon))
-            }
-        }
-        OsmObj::Relation(r) => {
-            let addr_name = r.tags.iter().find(|t| t.0 == "name").unwrap().1;
-
-            for sub_obj in obj.children {
-                match sub_obj.root {
-                    OsmObj::Node(n) if n.tags.iter().any(is_valid_housenumber_tag) => {
-                        let mut addr = new_address(&n.tags, n.lat(), n.lon());
-                        addr.street = Some(addr_name.clone());
-                        db.insert(addr);
-                    }
-                    OsmObj::Way(w) if w.tags.iter().any(is_valid_housenumber_tag) => {
-                        if let Some((lat, lon)) = get_way_lat_lon(&sub_obj.children) {
-                            let mut addr = new_address(&w.tags, lat, lon);
-                            addr.street = Some(addr_name.clone());
-                            db.insert(addr);
-                        }
-                    }
-                    _ => {} // currently not handling relations in relations
+fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T, override_street: Option<&str>) {
+    let mut address = {
+        match obj.root {
+            OsmObj::Node(n) => new_address(&n.tags, n.lat(), n.lon()),
+            OsmObj::Way(way) => {
+                if let Some((lat, lon)) = get_way_lat_lon(&obj.children) {
+                    new_address(&way.tags, lat, lon)
+                } else {
+                    return;
                 }
             }
+            OsmObj::Relation(r) => {
+                if let Some(addr_name) = r.tags.iter().find(|t| t.0 == "name").map(|(_, n)| n) {
+                    for sub_obj in obj.children {
+                        handle_obj(sub_obj, db, Some(addr_name));
+                    }
+                }
+
+                return;
+            }
         }
+    };
+
+    if let Some(street) = override_street {
+        address.street = Some(street.to_string());
     }
+
+    db.insert(address);
 }
 
 /// The entry point of the **OpenStreetMap** importer.
