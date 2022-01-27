@@ -1,11 +1,24 @@
 use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
-use smartstring::alias::String as SString;
+use smartstring::alias::String;
 use std::fs;
 
-/// Returns a `String` representing the current time under the form "HH:MM:SS".
-pub fn get_time() -> std::string::String {
-    let now = time::OffsetDateTime::now_utc();
-    format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second())
+/// Returns a structure that displays as the current time under the form "HH:MM:SS".
+pub fn get_time() -> impl std::fmt::Display {
+    struct FormatTime(time::OffsetDateTime);
+
+    impl std::fmt::Display for FormatTime {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "{:02}:{:02}:{:02}",
+                self.0.hour(),
+                self.0.minute(),
+                self.0.second()
+            )
+        }
+    }
+
+    FormatTime(time::OffsetDateTime::now_utc())
 }
 
 /// Prints the message on stdout prepended by the current time.
@@ -19,16 +32,9 @@ pub fn get_time() -> std::string::String {
 /// tprint!("Printing even more: {}", 32);
 /// ```
 #[macro_export]
-macro_rules! tformat {
-    ($($arg:tt)*) => {{
-        format!("[{}] {}", $crate::get_time(), format!($($arg)*))
-    }}
-}
-
-#[macro_export]
 macro_rules! tprint {
-    ($($arg:tt)*) => {{
-        print!("{}", $crate::tformat!($($arg)*));
+    ($format_str: literal $($arg:tt)*) => {{
+        print!(concat!("[{}] ", $format_str), $crate::get_time() $($arg)*);
     }}
 }
 
@@ -44,22 +50,22 @@ macro_rules! tprint {
 /// ```
 #[macro_export]
 macro_rules! teprint {
-    ($($arg:tt)*) => {{
-        eprint!("{}", $crate::tformat!($($arg)*));
+    ($format_str: literal $($arg:tt)*) => {{
+        eprint!(concat!("[{}] ", $format_str), $crate::get_time() $($arg)*);
     }}
 }
 
 #[macro_export]
 macro_rules! tprintln {
-    ($($arg:tt)*) => {{
-        println!("{}", $crate::tformat!($($arg)*));
+    ($format_str: literal $($arg:tt)*) => {{
+        println!(concat!("[{}] ", $format_str), $crate::get_time() $($arg)*);
     }}
 }
 
 #[macro_export]
 macro_rules! teprintln {
-    ($($arg:tt)*) => {{
-        eprintln!("{}", $crate::tformat!($($arg)*));
+    ($format_str: literal $($arg:tt)*) => {{
+        eprintln!(concat!("[{}] ", $format_str), $crate::get_time() $($arg)*);
     }}
 }
 
@@ -69,13 +75,13 @@ macro_rules! teprintln {
 pub struct Address {
     pub lat: f64,
     pub lon: f64,
-    pub number: Option<SString>,
-    pub street: Option<SString>,
-    pub unit: Option<SString>,
-    pub city: Option<SString>,
-    pub district: Option<SString>,
-    pub region: Option<SString>,
-    pub postcode: Option<SString>,
+    pub number: Option<String>,
+    pub street: Option<String>,
+    pub unit: Option<String>,
+    pub city: Option<String>,
+    pub district: Option<String>,
+    pub region: Option<String>,
+    pub postcode: Option<String>,
 }
 
 impl Address {
@@ -91,7 +97,7 @@ impl Address {
     /// let addr = Address {
     ///     lat: 0.,
     ///     lon: 0.,
-    ///     number: Some("12".to_owned()),
+    ///     number: Some("12".into()),
     ///     street: None,
     ///     unit: None,
     ///     city: None,
@@ -117,8 +123,12 @@ impl<'r> TryFrom<&Row<'r>> for Address {
     type Error = rusqlite::Error;
 
     fn try_from(row: &Row<'r>) -> Result<Self, Self::Error> {
-        let get_string =
-            |col| Ok::<_, Self::Error>(row.get::<_, Option<String>>(col)?.map(Into::into));
+        let get_string = |col| {
+            Ok::<_, Self::Error>(
+                row.get::<_, Option<std::string::String>>(col)?
+                    .map(Into::into),
+            )
+        };
 
         Ok(Address {
             lat: row.get("lat")?,
@@ -225,8 +235,8 @@ impl DB {
     /// db.insert(Address {
     ///     lat: 0.,
     ///     lon: 0.,
-    ///     number: Some("12".to_owned()),
-    ///     street: Some("rue des champignons".to_owned()),
+    ///     number: Some("12".into()),
+    ///     street: Some("rue des champignons".into()),
     ///     unit: None,
     ///     city: None,
     ///     district: None,
@@ -330,8 +340,8 @@ pub trait CompatibleDB {
     /// db.insert(Address {
     ///     lat: 0.,
     ///     lon: 0.,
-    ///     number: Some("12".to_owned()),
-    ///     street: Some("rue des champignons".to_owned()),
+    ///     number: Some("12".into()),
+    ///     street: Some("rue des champignons".into()),
     ///     unit: None,
     ///     city: None,
     ///     district: None,
@@ -352,10 +362,10 @@ pub trait CompatibleDB {
     /// db.insert(Address {
     ///     lat: 0.,
     ///     lon: 0.,
-    ///     number: Some("12".to_owned()),
-    ///     street: Some("rue des champignons".to_owned()),
+    ///     number: Some("12".into()),
+    ///     street: Some("rue des champignons".into()),
     ///     unit: None,
-    ///     city: Some("Paris".to_owned()),
+    ///     city: Some("Paris".into()),
     ///     district: None,
     ///     region: None,
     ///     postcode: None,
@@ -375,8 +385,8 @@ pub trait CompatibleDB {
     /// db.insert(Address {
     ///     lat: 0.,
     ///     lon: 0.,
-    ///     number: Some("12".to_owned()),
-    ///     street: Some("rue des champignons".to_owned()),
+    ///     number: Some("12".into()),
+    ///     street: Some("rue des champignons".into()),
     ///     unit: None,
     ///     city: None,
     ///     district: None,
@@ -400,7 +410,7 @@ pub trait CompatibleDB {
     /// db.insert(Address {
     ///     lat: 0.,
     ///     lon: 0.,
-    ///     number: Some("12".to_owned()),
+    ///     number: Some("12".into()),
     ///     street: None,
     ///     unit: None,
     ///     city: None,
@@ -424,7 +434,7 @@ pub trait CompatibleDB {
     /// db.insert(Address {
     ///     lat: 0.,
     ///     lon: 0.,
-    ///     number: Some("12".to_owned()),
+    ///     number: Some("12".into()),
     ///     street: None,
     ///     unit: None,
     ///     city: None,
@@ -432,9 +442,9 @@ pub trait CompatibleDB {
     ///     region: None,
     ///     postcode: None,
     /// });
-    /// assert_eq!(db.get_nb_by_errors_kind(), vec![("Missing mandataory field".to_owned(), 1)]);
+    /// assert_eq!(db.get_nb_by_errors_kind(), vec![("Missing mandataory field".into(), 1)]);
     /// ```
-    fn get_nb_by_errors_kind(&mut self) -> Vec<(String, i64)>;
+    fn get_nb_by_errors_kind(&mut self) -> Vec<(std::string::String, i64)>;
     /// Returns a list of addresses matching the given housenumber and street name.
     ///
     /// Example:
@@ -447,8 +457,8 @@ pub trait CompatibleDB {
     /// db.insert(Address {
     ///     lat: 0.,
     ///     lon: 0.,
-    ///     number: Some("12".to_owned()),
-    ///     street: Some("rue des champignons".to_owned()),
+    ///     number: Some("12".into()),
+    ///     street: Some("rue des champignons".into()),
     ///     unit: None,
     ///     city: None,
     ///     district: None,
@@ -459,8 +469,8 @@ pub trait CompatibleDB {
     ///            vec![Address {
     ///                 lat: 0.,
     ///                 lon: 0.,
-    ///                 number: Some("12".to_owned()),
-    ///                 street: Some("rue des champignons".to_owned()),
+    ///                 number: Some("12".into()),
+    ///                 street: Some("rue des champignons".into()),
     ///                 unit: None,
     ///                 city: None,
     ///                 district: None,
@@ -519,7 +529,7 @@ impl CompatibleDB for DB {
         iter.next().expect("no count???").expect("failed")
     }
 
-    fn get_nb_by_errors_kind(&mut self) -> Vec<(String, i64)> {
+    fn get_nb_by_errors_kind(&mut self) -> Vec<(std::string::String, i64)> {
         self.flush();
         let mut stmt = self
             .conn
