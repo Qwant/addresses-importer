@@ -223,7 +223,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
     // Store objects that have not finished being built yet
     let mut pending: FxHashMap<OsmId, DepObj> = FxHashMap::default();
 
-    // Store dependancy of one object to another and its depth
+    // Store dependency of one object to another and its depth
     let mut deps_graph: FxHashMap<OsmId, (u8, Vec<OsmId>)> = FxHashMap::default();
 
     // ID of the last explicitly imported object (excludes objects that are picked as a dependancy)
