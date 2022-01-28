@@ -370,7 +370,7 @@ where
                     let hashes: Vec<_> = hash_address(&address).collect();
 
                     if hashes.is_empty() {
-                        teprintln!("Ignoring an address that can't be hashed: {:?}", address);
+                        // teprintln!("Ignoring an address that can't be hashed: {:?}", address);
                         continue;
                     }
 

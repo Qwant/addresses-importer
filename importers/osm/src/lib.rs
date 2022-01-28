@@ -15,26 +15,29 @@
 //!    the same rules depending if's a **node** or a **way**. We currently ignore the sub-references
 //!    if they are **relation**s.
 
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::BufReader;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Seek};
 use std::path::Path;
 
+use fxhash::FxHashMap;
 use geos::Geometry;
-
 use osmpbfreader::objects::{OsmId, Tags};
-use osmpbfreader::{OsmObj, OsmPbfReader, StoreObjs};
+use osmpbfreader::{OsmObj, OsmPbfReader};
 
-use rusqlite::{Connection, DropBehavior, ToSql, NO_PARAMS};
-
-use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
+use tools::{teprint, tprintln, Address, CompatibleDB};
 
 /// Size of the read buffer put on top of the input PBF file
 const PBF_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
+/// While reading the PBF, some objects for which members have not been fetched yet are kept into
+/// memory. This is the maximal number of objects that are explicitly loaded from the PBF, value 5M
+/// usually leads to less than 10GB of ram usage.
+const MAX_PENDING_OBJECTS: usize = 5_000_000;
+
 /// Used to make the stored elements in the first lighter by removing all the unused tags.
-const TAGS_TO_KEEP: &[&str] = &[
+const REL_TAGS_TO_KEEP: &[&str] = &["name"];
+const WAY_TAGS_TO_KEEP: &[&str] = &["addr:housenumber", "addr:street"];
+const NODE_TAGS_TO_KEEP: &[&str] = &[
     "addr:housenumber",
     "addr:street",
     "addr:unit",
@@ -42,22 +45,10 @@ const TAGS_TO_KEEP: &[&str] = &[
     "addr:district",
     "addr:region",
     "addr:postcode",
+    "name",
 ];
 
 const MAX_VALID_HOUSENUMBER_LENGTH: usize = 8;
-
-/// We need to know what kind the element is when reading the database in order to deserialize it.
-macro_rules! get_kind {
-    ($obj:expr) => {
-        if $obj.is_node() {
-            &0
-        } else if $obj.is_way() {
-            &1
-        } else {
-            &2
-        }
-    };
-}
 
 /// Convert an element's tags into an address.
 ///
@@ -114,273 +105,233 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
     addr
 }
 
-/// Type used to store elements in the "first pass".
-#[derive(Debug)]
-enum StoredObj<'a> {
-    Relation(Cow<'a, OsmObj>, Vec<StoredObj<'a>>),
-    Way(Cow<'a, OsmObj>, Vec<Cow<'a, OsmObj>>),
-    Node(Cow<'a, OsmObj>),
+/// Pack an OSM object together with the objects it depends on.
+#[derive(Clone, Debug)]
+struct DepObj {
+    root: OsmObj,
+    children: Vec<DepObj>,
 }
 
-/// Database wrapper used to store the potential addresses. They are stored using the [`StoredObj`]
-/// enum. A buffer is used in order to not store everything on the disk.
-// TODO: maybe we should remove this buffer and directly use the SQLite cache?
-struct DBNodes {
-    conn: Connection,
-    buffer: HashMap<OsmId, OsmObj>,
-    buffer_size: usize,
-    db_file: String,
-}
-
-impl DBNodes {
-    fn new(db_file: &str, buffer_size: usize) -> Result<DBNodes, String> {
-        let _ = fs::remove_file(db_file); // we ignore any potential error
-        let conn = Connection::open(db_file)
-            .map_err(|e| format!("failed to open SQLITE connection: {}", e))?;
-        conn.execute("DROP TABLE IF EXISTS nodes", NO_PARAMS)
-            .expect("failed to drop nodes");
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS nodes (
-                id   INTEGER NOT NULL,
-                obj  BLOB NOT NULL,
-                kind INTEGER NOT NULL,
-                UNIQUE(id, kind)
-             )",
-            NO_PARAMS,
-        )
-        .map_err(|e| format!("failed to create table: {}", e))?;
-        Ok(DBNodes {
-            conn,
-            buffer: HashMap::with_capacity(buffer_size),
-            buffer_size,
-            db_file: db_file.to_owned(),
-        })
+impl DepObj {
+    /// Check if all the children for this node have been extracted from OSM file.
+    fn is_complete(&self) -> bool {
+        self.children.len() == self.children.capacity()
     }
 
-    fn flush_buffer(&mut self) {
-        if self.buffer.is_empty() {
-            return;
-        }
-        let mut tx = self
-            .conn
-            .transaction()
-            .expect("DBNodes::flush: transaction creation failed");
-        tx.set_drop_behavior(DropBehavior::Ignore);
+    /// Return an iterator over all id's of this object's children
+    fn expected_children(&self) -> impl Iterator<Item = OsmId> + '_ {
+        let way_children = (self.root.way())
+            .into_iter()
+            .flat_map(|way| way.nodes.iter().copied().map(Into::into));
 
-        {
-            let mut stmt = tx
-                .prepare("INSERT OR IGNORE INTO nodes(id, obj, kind) VALUES (?1, ?2, ?3)")
-                .expect("DBNodes::flush: prepare failed");
-            for (id, obj) in self.buffer.drain() {
-                let ser_obj = match bincode::serialize(&obj) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        teprintln!("[OSM] DBNodes::flush: failed to convert to json: {}", e);
-                        continue;
-                    }
-                };
-                let kind = get_kind!(obj);
-                if let Err(e) = stmt.execute(&[&id.inner_id() as &dyn ToSql, &ser_obj, kind]) {
-                    teprintln!("[OSM] DBNodes::flush: insert failed: {}", e);
-                }
+        let rel_children = (self.root.relation())
+            .into_iter()
+            .flat_map(|way| way.refs.iter().map(|r| r.member));
+
+        way_children.chain(rel_children)
+    }
+
+    /// Reorder children with respect to OSM specified order, then it will
+    /// remove the list of children ID's from the original object in order to
+    /// free some RAM.
+    ///
+    /// This method must only be used when an object is complete as it would
+    /// overwise destroy objects hierarchy.
+    fn reorder_and_cleanup_children(&mut self) {
+        // Execute some kind of radix sort: first we order objects by id
+        let mut as_map: FxHashMap<OsmId, Vec<DepObj>> = FxHashMap::default();
+
+        for obj in self.children.drain(..) {
+            as_map.entry(obj.root.id()).or_default().push(obj);
+        }
+
+        // Then we fetch objects in order based on their ID
+        self.children = self
+            .expected_children()
+            .filter_map(move |id| as_map.get_mut(&id)?.pop())
+            .collect();
+
+        self.children.shrink_to_fit();
+
+        // Cleanup original object dependencies
+        match &mut self.root {
+            OsmObj::Node(_) => {}
+            OsmObj::Way(w) => {
+                std::mem::take(&mut w.nodes);
+            }
+            OsmObj::Relation(r) => {
+                std::mem::take(&mut r.refs);
             }
         }
-        tx.commit()
-            .expect("DBNodes::flush: transaction commit failed");
     }
+}
 
-    fn get_from_id(&self, id: &OsmId) -> Option<Cow<OsmObj>> {
-        if let Some(obj) = self.buffer.get(id) {
-            return Some(Cow::Borrowed(obj));
-        }
-        let mut stmt = self
-            .conn
-            .prepare("SELECT obj FROM nodes WHERE id=?1 AND kind=?2")
-            .expect("DB::get_from_id: prepare failed");
-        let mut iter = stmt
-            .query(&[&id.inner_id() as &dyn ToSql, get_kind!(id)])
-            .expect("DB::get_from_id: query_map failed");
-        if let Some(row) = iter.next().expect("DBNodes::get_from_id: next failed") {
-            let obj: Vec<u8> = row
-                .get(0)
-                .expect("DBNodes::get_from_id: failed to get obj field");
-            return Some(Cow::Owned(
-                bincode::deserialize(&obj).expect("DBNodes::for_each: serde conversion failed"),
-            ));
-        }
-        None
-    }
-
-    fn get_way<'a>(&'a self, way: Cow<'a, OsmObj>) -> StoredObj<'a> {
-        let nodes = match &*way {
-            OsmObj::Way(w) => w
-                .nodes
-                .iter()
-                .filter_map(|n| self.get_from_id(&OsmId::Node(*n)))
-                .collect::<Vec<_>>(),
-            _ => panic!("only way can be used in get_way"),
+impl From<OsmObj> for DepObj {
+    fn from(mut obj: OsmObj) -> Self {
+        let tags_to_keep = match obj {
+            OsmObj::Node(_) => NODE_TAGS_TO_KEEP,
+            OsmObj::Way(_) => WAY_TAGS_TO_KEEP,
+            OsmObj::Relation(_) => REL_TAGS_TO_KEEP,
         };
-        StoredObj::Way(way, nodes)
-    }
 
-    fn get_relation<'a>(&'a self, rel: Cow<'a, OsmObj>) -> StoredObj<'a> {
-        let nodes = match &*rel {
-            OsmObj::Relation(r) => r
-                .refs
-                .iter()
-                .filter_map(|n| {
-                    let elem = self.get_from_id(&n.member)?;
-                    if elem.is_way() {
-                        Some(self.get_way(elem))
-                    } else if elem.is_relation() {
-                        Some(self.get_relation(elem))
-                    } else {
-                        Some(StoredObj::Node(elem))
-                    }
-                })
-                .collect::<Vec<_>>(),
-            _ => panic!("only relations can be used in get_relation"),
+        let tags = match &mut obj {
+            OsmObj::Node(n) => &mut n.tags,
+            OsmObj::Way(w) => &mut w.tags,
+            OsmObj::Relation(r) => &mut r.tags,
         };
-        StoredObj::Relation(rel, nodes)
-    }
 
-    fn iter_objs<'a, F: FnMut(StoredObj<'a>)>(&'a self, mut f: F) {
-        for (_, obj) in self.buffer.iter() {
-            if obj.is_way() {
-                f(self.get_way(Cow::Borrowed(obj)))
-            } else if obj.is_relation() {
-                f(self.get_relation(Cow::Borrowed(obj)))
-            } else if obj.tags().iter().any(is_valid_housenumber_tag)
-                && obj.tags().iter().any(|t| t.0 == "addr:street")
-            {
-                f(StoredObj::Node(Cow::Borrowed(obj)))
-            }
-        }
-        let mut stmt = self.conn.prepare("SELECT obj FROM nodes").expect("failed");
-        let person_iter = stmt
-            .query_map(NO_PARAMS, |row| {
-                let obj: Vec<u8> = row.get(0).expect("failed to get obj field");
-                Ok(bincode::deserialize::<OsmObj>(&obj)
-                    .expect("DBNodes::iter_objs: serde conversion failed"))
-            })
-            .expect("couldn't create iterator on query");
-        for obj in person_iter {
-            let obj = obj.expect("why is it still wrapped???");
-            if obj.is_way() {
-                f(self.get_way(Cow::Owned(obj)))
-            } else if obj.is_relation() {
-                f(self.get_relation(Cow::Owned(obj)))
-            } else if obj.tags().iter().any(is_valid_housenumber_tag)
-                && obj.tags().iter().any(|t| t.0 == "addr:street")
-            {
-                f(StoredObj::Node(Cow::Owned(obj)))
-            }
-        }
-    }
+        tags.retain(|k, _| tags_to_keep.contains(&k.as_str()));
+        tags.shrink_to_fit();
 
-    fn count(&self) -> i64 {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT COUNT(*) FROM nodes")
-            .expect("failed to prepare");
-        let mut iter = stmt
-            .query_map(NO_PARAMS, |row| row.get(0))
-            .expect("query_map failed");
-        iter.next().expect("no count???").expect("failed")
+        let max_children = {
+            match &obj {
+                OsmObj::Node(_) => 0,
+                OsmObj::Way(w) => w.nodes.len(),
+                OsmObj::Relation(r) => r.refs.len(),
+            }
+        };
+
+        Self {
+            root: obj,
+            children: Vec::with_capacity(max_children),
+        }
     }
 }
 
-impl StoreObjs for DBNodes {
-    fn insert(&mut self, id: OsmId, mut obj: OsmObj) {
-        match obj {
-            OsmObj::Node(ref mut n) => {
-                n.tags
-                    .retain(|k, _| TAGS_TO_KEEP.iter().any(|x| *x == k.as_str()));
-            }
-            OsmObj::Way(ref mut w) => {
-                w.tags
-                    .retain(|k, _| k == "addr:housenumber" || k == "addr:street");
-                if w.tags.is_empty() {
-                    // We're supposed to have at least the housenumber (in case we're in a
-                    // relation) or the street (in case we're a street with housenumbers).
-                    return;
-                }
-            }
-            OsmObj::Relation(ref mut r) => {
-                if !r.tags.iter().any(|x| x.0 == "name") {
-                    return;
-                }
-                r.tags.retain(|k, _| k == "name");
-            }
-        }
-        self.buffer.insert(id, obj);
-        if self.buffer.len() >= self.buffer_size {
-            self.flush_buffer();
-        }
-    }
-
-    fn contains_key(&self, id: &OsmId) -> bool {
-        if self.buffer.contains_key(id) {
-            return true;
-        }
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM nodes WHERE id=?1 AND kind=?2")
-            .expect("DB::contains_key: prepare failed");
-        let mut iter = stmt
-            .query(&[&id.inner_id() as &dyn ToSql, get_kind!(id)])
-            .expect("DB::contains_key: query_map failed");
-        iter.next().expect("DB::contains_key: no row").is_some()
-    }
+/// Compute depth of given object in dependency graph: an object with no parent
+/// is of depth 1, its children are of depth 2, etc...
+fn object_depth(obj_id: OsmId, deps_graph: &FxHashMap<OsmId, (u8, Vec<OsmId>)>) -> u8 {
+    deps_graph.get(&obj_id).map(|x| x.0).unwrap_or(1)
 }
 
-impl Drop for DBNodes {
-    fn drop(&mut self) {
-        self.conn.flush_prepared_statement_cache();
-        let _ = fs::remove_file(&self.db_file); // we ignore any potential error bis
-    }
-}
-
-/// Used in the "first pass" to generate the database fulfilled with all the potential addresses
-/// present in the PBF file.
+/// Fetch all objects from input PBF reader. The objects that validate the function `filter_obj`
+/// will be passed into `handle_obj` with their dependencies.
 ///
-/// To learn more about the filtering rules, please refer to the crate level documentation.
-fn get_nodes(pbf_file: &Path, db_path: &Path) -> DBNodes {
-    let mut db_nodes = DBNodes::new(db_path.to_str().expect("invalid path for nodes db"), 1000)
-        .expect("failed to create DBNodes");
-    {
-        let file = BufReader::with_capacity(
-            PBF_BUFFER_SIZE,
-            File::open(&pbf_file)
-                .unwrap_or_else(|err| panic!("Failed to open file {:?}: {}", pbf_file, err)),
-        );
+/// This is done by maintaining a list of objects into memory together with the graph of the
+/// objects they depend on. The PBF files will be read sequentially several times until all
+/// dependencies are resolved. To preserve from very high memory usage, the objects are deallocated
+/// as soon as all their dependencies are resolved.
+fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
+    max_depth: u8,
+    reader: &mut OsmPbfReader<R>,
+    filter_obj: impl Fn(&OsmObj) -> bool,
+    db: &mut T,
+) {
+    // Simple counter for objects extracted so far
+    let mut count_objs: u64 = 0;
 
-        OsmPbfReader::new(file)
-            .get_objs_and_deps_store(
-                |obj| match obj {
-                    OsmObj::Node(o) => {
-                        o.tags.iter().any(is_valid_housenumber_tag)
-                            && o.tags.iter().any(|x| x.0 == "addr:street")
+    // Store objects that have not finished being built yet
+    let mut pending: FxHashMap<OsmId, DepObj> = FxHashMap::default();
+
+    // Store dependency of one object to another and its depth
+    let mut deps_graph: FxHashMap<OsmId, (u8, Vec<OsmId>)> = FxHashMap::default();
+
+    // ID of the last explicitly imported object (excludes objects that are picked as a dependancy)
+    let mut last_imported_object = None;
+
+    // When this is true, we import addresses that validate the filter, this is set to false when
+    // the graph may take too much RAM
+    let mut import_first_layer = true;
+
+    // Check if current iteration made progress
+    let mut made_progress = true;
+
+    while made_progress {
+        teprint!("Build graph layer ... ");
+        made_progress = false;
+        reader.rewind().expect("could not rewind PBF reader");
+
+        'read_pbf: for obj in reader.par_iter() {
+            let obj = obj.expect("could not read pbf");
+
+            // The first layer only consists of filtered objects. Next layers include objects that
+            // are required by dependency and not yet pending
+            let feasible = (import_first_layer && filter_obj(&obj))
+                || (deps_graph.contains_key(&obj.id()) && !pending.contains_key(&obj.id()));
+
+            // Keep track of the last explicitly imported object while import_first_layer is true.
+            // Then, it is set to true when the run reaches a section of the file that is not
+            // imported yet.
+            if import_first_layer {
+                last_imported_object = Some(obj.id());
+            } else if last_imported_object == Some(obj.id()) {
+                import_first_layer = true;
+            }
+
+            if !feasible {
+                continue;
+            }
+
+            // Convert into internal object format
+            let obj: DepObj = obj.into();
+            made_progress = true;
+
+            // Create dependencies to this object, if they are within selected depth
+            if object_depth(obj.root.id(), &deps_graph) < max_depth {
+                for child in obj.expected_children() {
+                    deps_graph
+                        .entry(child)
+                        .or_insert_with(|| (1, Vec::new()))
+                        .1
+                        .push(obj.root.id());
+                }
+            }
+
+            // Start a graph search from current node, which propagate on completed objects
+            let mut todo = vec![obj];
+
+            while let Some(mut obj) = todo.pop() {
+                if obj.is_complete() || object_depth(obj.root.id(), &deps_graph) == max_depth {
+                    obj.reorder_and_cleanup_children();
+
+                    if let Some((_, parents_id)) = deps_graph.remove(&obj.root.id()) {
+                        // Insert the object in its parents
+                        for parent_id in parents_id {
+                            // Fetch parent from pending objects. Occasionally it is dependency of
+                            // two objects and will already be in the `todo` heap.
+                            let parent_obj = {
+                                if let Some(parent_obj) = pending.remove(&parent_id) {
+                                    todo.push(parent_obj);
+                                    todo.last_mut().unwrap()
+                                } else {
+                                    todo.iter_mut().find(|x| x.root.id() == parent_id).unwrap()
+                                }
+                            };
+
+                            // Note that this clone should be OK because repeating child will
+                            // normally only happen for closed ways.
+                            parent_obj.children.push(obj.clone());
+                        }
+                    } else {
+                        // If this object has no parents it means that it was selected by input
+                        // filter and must be handled
+                        handle_obj(obj, db, None);
+                        count_objs += 1;
                     }
-                    OsmObj::Way(w) => {
-                        !w.nodes.is_empty()
-                            && w.tags.iter().any(is_valid_housenumber_tag)
-                            && w.tags.iter().any(|x| x.0 == "addr:street")
-                    }
-                    OsmObj::Relation(r) => {
-                        !r.refs.is_empty()
-                            && r.tags
-                                .iter()
-                                .any(|x| x.0 == "type" && x.1 == "associatedStreet")
-                            && r.tags.iter().any(|x| x.0 == "name")
-                    }
-                },
-                &mut db_nodes,
-            )
-            .expect("get_nodes: get_objs_and_deps_store failed");
+                } else {
+                    pending.insert(obj.root.id(), obj);
+                }
+            }
+
+            // Reset run if too many items are in dependencies
+            if import_first_layer && pending.len() >= MAX_PENDING_OBJECTS {
+                break 'read_pbf;
+            }
+        }
+
+        import_first_layer = false;
+
+        if made_progress {
+            eprintln!(
+                "{} pending, {} deps, objs: {}",
+                pending.len(),
+                deps_graph.len(),
+                count_objs
+            );
+        } else {
+            eprintln!("done");
+        }
     }
-    db_nodes.flush_buffer();
-    db_nodes
 }
 
 /// Function to generate a position for a **way**. If the **way** is only composed of one **node**,
@@ -388,17 +339,20 @@ fn get_nodes(pbf_file: &Path, db_path: &Path) -> DBNodes {
 /// create a polygon and then get its centroid's latitude and longitude.
 ///
 /// In case of error when generating the polygon, it'll return `None`.
-fn get_way_lat_lon(sub_objs: &[Cow<OsmObj>]) -> Option<(f64, f64)> {
-    let nodes = sub_objs
+fn get_way_lat_lon(sub_objs: &[DepObj]) -> Option<(f64, f64)> {
+    let nodes: Vec<_> = sub_objs
         .iter()
-        .map(|x| match &**x {
-            OsmObj::Node(n) => n,
-            _ => panic!("nothing else than nodes should be in a way!"),
+        .map(|x| {
+            x.root
+                .node()
+                .expect("nothing else than nodes should be in a way!")
         })
-        .collect::<Vec<_>>();
-    if nodes.len() == 1 {
-        return Some((nodes[0].lat(), nodes[0].lon()));
+        .collect();
+
+    if let [node] = nodes[..] {
+        return Some((node.lat(), node.lon()));
     }
+
     let polygon = format!(
         "POLYGON(({}))",
         nodes
@@ -407,11 +361,13 @@ fn get_way_lat_lon(sub_objs: &[Cow<OsmObj>]) -> Option<(f64, f64)> {
             .collect::<Vec<_>>()
             .join(",")
     );
+
     if let Ok(geom) = Geometry::new_from_wkt(&polygon).and_then(|g| g.get_centroid()) {
         if let (Ok(lon), Ok(lat)) = (geom.get_x(), geom.get_y()) {
             return Some((lat, lon));
         };
     }
+
     None
 }
 
@@ -421,53 +377,34 @@ fn get_way_lat_lon(sub_objs: &[Cow<OsmObj>]) -> Option<(f64, f64)> {
 /// others into the provided `db` argument.
 ///
 /// The conditions are explained at the crate level.
-fn handle_obj<T: CompatibleDB>(obj: StoredObj, db: &mut T) {
-    match obj {
-        StoredObj::Node(n) => match &*n {
-            OsmObj::Node(n) => db.insert(new_address(&n.tags, n.lat(), n.lon())),
-            _ => unreachable!(),
-        },
-        StoredObj::Way(way, nodes) => {
-            if let Some((lat, lon)) = get_way_lat_lon(&nodes) {
-                db.insert(new_address(way.tags(), lat, lon));
-            }
-        }
-        StoredObj::Relation(r, objs) => {
-            let addr_name = match r.tags().iter().find(|t| t.0 == "name").map(|t| t.1) {
-                Some(addr) => addr,
-                None => unreachable!(),
-            };
-            for sub_obj in objs {
-                match sub_obj {
-                    StoredObj::Node(n) if n.tags().iter().any(is_valid_housenumber_tag) => {
-                        match &*n {
-                            OsmObj::Node(n) => {
-                                let mut addr = new_address(&n.tags, n.lat(), n.lon());
-                                addr.street = Some(addr_name.clone());
-                                db.insert(addr);
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-                    StoredObj::Way(w, nodes) if w.tags().iter().any(is_valid_housenumber_tag) => {
-                        if let Some((lat, lon)) = get_way_lat_lon(&nodes) {
-                            let mut addr = new_address(w.tags(), lat, lon);
-                            addr.street = Some(addr_name.clone());
-                            db.insert(addr);
-                        }
-                    }
-                    _ => {} // currently not handling relations in relations
+fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T, override_street: Option<&str>) {
+    let mut address = {
+        match obj.root {
+            OsmObj::Node(n) => new_address(&n.tags, n.lat(), n.lon()),
+            OsmObj::Way(way) => {
+                if let Some((lat, lon)) = get_way_lat_lon(&obj.children) {
+                    new_address(&way.tags, lat, lon)
+                } else {
+                    return;
                 }
             }
-        }
-    }
-}
+            OsmObj::Relation(r) => {
+                if let Some(addr_name) = r.tags.iter().find(|t| t.0 == "name").map(|(_, n)| n) {
+                    for sub_obj in obj.children {
+                        handle_obj(sub_obj, db, Some(addr_name));
+                    }
+                }
 
-/// This is the "first pass" function. It'll iterate through all objects of "interest" and store
-/// them in the provided `db`. Take a look at the crate documentation for more details (notably for
-/// how the filtering works).
-fn iter_nodes<T: CompatibleDB>(db_nodes: DBNodes, db: &mut T) {
-    db_nodes.iter_objs(|obj| handle_obj(obj, db));
+                return;
+            }
+        }
+    };
+
+    if let Some(street) = override_street {
+        address.street = Some(street.to_string());
+    }
+
+    db.insert(address);
 }
 
 /// The entry point of the **OpenStreetMap** importer.
@@ -483,16 +420,39 @@ fn iter_nodes<T: CompatibleDB>(db_nodes: DBNodes, db: &mut T) {
 /// use osm::import_addresses;
 ///
 /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
-/// import_addresses("some_file.pbf".as_ref(), "nodes.db".as_ref(), &mut db);
+/// import_addresses("some_file.pbf".as_ref(), &mut db);
 /// ```
-pub fn import_addresses<T: CompatibleDB>(pbf_file: &Path, nodes_db_path: &Path, db: &mut T) {
+pub fn import_addresses<T: CompatibleDB>(pbf_file: &Path, db: &mut T) {
     let count_before = db.get_nb_addresses();
 
-    teprint!("[OSM] Getting nodes ...\r");
-    let db_nodes = get_nodes(pbf_file, nodes_db_path);
-    teprintln!("[OSM] Getting nodes ... {} nodes", db_nodes.count());
+    let filter_obj = |obj: &OsmObj| match obj {
+        OsmObj::Node(n) => {
+            n.tags.iter().any(is_valid_housenumber_tag)
+                && n.tags.iter().any(|x| x.0 == "addr:street")
+        }
+        OsmObj::Way(w) => {
+            !w.nodes.is_empty()
+                && w.tags.iter().any(is_valid_housenumber_tag)
+                && w.tags.iter().any(|x| x.0 == "addr:street")
+        }
+        OsmObj::Relation(r) => {
+            !r.refs.is_empty()
+                && r.tags
+                    .iter()
+                    .any(|x| x.0 == "type" && x.1 == "associatedStreet")
+                && r.tags.iter().any(|x| x.0 == "name")
+        }
+    };
 
-    iter_nodes(db_nodes, db);
+    // Init reader
+    let file = BufReader::with_capacity(
+        PBF_BUFFER_SIZE,
+        File::open(&pbf_file)
+            .unwrap_or_else(|err| panic!("Failed to open file {:?}: {}", pbf_file, err)),
+    );
+
+    let mut reader = OsmPbfReader::new(file);
+    fetch_objects(3, &mut reader, filter_obj, db);
 
     let count_after = db.get_nb_addresses();
     tprintln!(
@@ -516,16 +476,16 @@ mod tests {
 
     #[test]
     fn check_relations() {
-        let pbf_file = "test-files/osm_input.pbf";
         let db_file = "check_relations.db";
-
         let mut db = DB::new(db_file, 0, true).expect("Failed to initialize DB");
-        let db_nodes = get_nodes(pbf_file.as_ref(), "nodes.db".as_ref());
-        assert_eq!(db_nodes.count(), 1406);
-        iter_nodes(db_nodes, &mut db);
+
+        let pbf_file = "test-files/osm_input.pbf";
+        import_addresses(pbf_file.as_ref(), &mut db);
         assert_eq!(db.get_nb_addresses(), 361);
+
         let addr = db.get_address(2, "Place de la Forêt de Cruye");
         assert_eq!(addr.len(), 1);
-        let _ = fs::remove_file(db_file); // we ignore any potential error
+
+        let _ = std::fs::remove_file(db_file); // we ignore any potential error
     }
 }

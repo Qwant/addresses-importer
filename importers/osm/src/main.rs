@@ -8,7 +8,7 @@ fn main() {
         return;
     }
     let mut db = DB::new("addresses.db", 1000, true).expect("Failed to create DB");
-    osm::import_addresses(args[1].as_ref(), "nodes.db".as_ref(), &mut db);
+    osm::import_addresses(args[1].as_ref(), &mut db);
     tprintln!(
         "Got {} addresses in {} cities (and {} errors)",
         db.get_nb_addresses(),
