@@ -199,7 +199,7 @@ impl From<OsmObj> for DepObj {
 }
 
 /// Compute depth of given object in dependency graph: an object with no parent
-/// is of depth 1, its child are of depth 2, etc...
+/// is of depth 1, its children are of depth 2, etc...
 fn object_depth(obj_id: OsmId, deps_graph: &FxHashMap<OsmId, (u8, Vec<OsmId>)>) -> u8 {
     deps_graph.get(&obj_id).map(|x| x.0).unwrap_or(1)
 }
@@ -217,20 +217,20 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
     filter_obj: impl Fn(&OsmObj) -> bool,
     db: &mut T,
 ) {
-    // Simple counter to objects extracted so far
+    // Simple counter for objects extracted so far
     let mut count_objs: u64 = 0;
 
     // Store objects that have not finished being built yet
     let mut pending: FxHashMap<OsmId, DepObj> = FxHashMap::default();
 
-    // Store dependancy of one object to another
+    // Store dependancy of one object to another and its depth
     let mut deps_graph: FxHashMap<OsmId, (u8, Vec<OsmId>)> = FxHashMap::default();
 
     // ID of the last explicitly imported object (excludes objects that are picked as a dependancy)
     let mut last_imported_object = None;
 
-    // When this is true, then we import addresses that validate the filter, this is set to false
-    // when the graph may take too much RAM
+    // When this is true, we import addresses that validate the filter, this is set to false when
+    // the graph may take too much RAM
     let mut import_first_layer = true;
 
     // Check if current iteration made progress
