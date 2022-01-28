@@ -29,6 +29,11 @@ use tools::{teprint, tprintln, Address, CompatibleDB};
 /// Size of the read buffer put on top of the input PBF file
 const PBF_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
+/// While reading the PBF, some objects for which members have not been fetched yet are kept into
+/// memory. This is the maximal number of objects that are explicitly loaded from the PBF, value 5M
+/// usually leads to less than 10GB of ram usage.
+const MAX_PENDING_OBJECTS: usize = 5_000_000;
+
 /// Used to make the stored elements in the first lighter by removing all the unused tags.
 const REL_TAGS_TO_KEEP: &[&str] = &["name"];
 const WAY_TAGS_TO_KEEP: &[&str] = &["addr:housenumber", "addr:street"];
@@ -309,7 +314,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
             }
 
             // Reset run if too many items are in dependencies
-            if import_first_layer && pending.len() >= 5_000_000 {
+            if import_first_layer && pending.len() >= MAX_PENDING_OBJECTS {
                 break 'read_pbf;
             }
         }
@@ -327,8 +332,6 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
             eprintln!("done");
         }
     }
-
-    // eprintln!("{:#?}", pending);
 }
 
 /// Function to generate a position for a **way**. If the **way** is only composed of one **node**,
