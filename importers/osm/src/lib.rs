@@ -287,20 +287,20 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
                     if let Some((_, parents_id)) = deps_graph.remove(&obj.root.id()) {
                         // Insert the object in its parents
                         for parent_id in parents_id {
-                            let mut parent_obj = {
+                            // Fetch parent from pending objects. Occasionally it is dependency of
+                            // two objects and will already be in the `todo` heap.
+                            let parent_obj = {
                                 if let Some(parent_obj) = pending.remove(&parent_id) {
-                                    parent_obj
+                                    todo.push(parent_obj);
+                                    todo.last_mut().unwrap()
                                 } else {
-                                    let index_in_stack =
-                                        todo.iter().position(|x| x.root.id() == parent_id).unwrap();
-                                    todo.swap_remove(index_in_stack)
+                                    todo.iter_mut().find(|x| x.root.id() == parent_id).unwrap()
                                 }
                             };
 
                             // Note that this clone should be OK because repeating child will
                             // normally only happen for closed ways.
                             parent_obj.children.push(obj.clone());
-                            todo.push(parent_obj);
                         }
                     } else {
                         // If this object has no parents it means that it was selected by input
