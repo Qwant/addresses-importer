@@ -3,7 +3,6 @@
 extern crate crossbeam_channel;
 extern crate csv;
 extern crate geo;
-extern crate geo_geojson;
 extern crate importer_bano;
 extern crate importer_openaddresses;
 extern crate importer_osm;

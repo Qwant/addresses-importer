@@ -12,7 +12,7 @@ use crate::deduplicator::Deduplicator;
 use libsqlite3_sys::ErrorCode::ConstraintViolation;
 use prog_rs::prelude::*;
 use rpostal::DuplicateStatus;
-use rusqlite::{Connection, NO_PARAMS};
+use rusqlite::Connection;
 use tools::{Address, CompatibleDB};
 
 /// Partition a range into several distinct partitions, given by increasing value.
@@ -212,7 +212,7 @@ where
     // Query list of addresses
     let mut stmt = input_conn.prepare("SELECT * FROM addresses;")?;
     let addresses = stmt
-        .query_map(NO_PARAMS, |row| row.try_into())?
+        .query_map([], |row| row.try_into())?
         .progress()
         .with_refresh_delay(refresh_delay)
         .with_prefix(format!("{:<45}", format!("{:?}", path)))

@@ -1,20 +1,20 @@
 //! Specifications for different address sources.
 
 use geo::algorithm::contains::Contains;
-use geo::{MultiPolygon, Point};
+use geo::{Geometry, MultiPolygon, Point};
+use geojson::GeoJson;
 use once_cell::sync::Lazy;
+use std::str::FromStr;
 
 use tools::Address;
 
 static FRANCE_SHAPE: Lazy<MultiPolygon<f64>> = Lazy::new(|| {
-    let collection = geo_geojson::from_str(include_str!("data/france.json"))
-        .expect("failed to parse shape for France");
-    collection
-        .into_iter()
-        .next()
-        .expect("found an empty collection for France")
-        .into_multi_polygon()
-        .expect("France should be a MultiPolygon")
+    let shape: Geometry<f64> = GeoJson::from_str(include_str!("data/france.json"))
+        .expect("failed to parse shape for France")
+        .try_into()
+        .expect("France shape should be a Geometry");
+
+    shape.try_into().expect("France should be a MultiPolygon")
 });
 
 /// A source of addresses.
