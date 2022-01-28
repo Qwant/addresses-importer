@@ -5,7 +5,7 @@ authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-rusqlite = "0.21"
+rusqlite = "0.26"
 serde = { version = "1.0", features = ["derive"] }
 time = { version = "0.2", features = ["std"] }
 

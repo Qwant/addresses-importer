@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use rusqlite::{Connection, Statement, ToSql, Transaction, NO_PARAMS};
+use rusqlite::{Connection, Statement, ToSql, Transaction};
 use tools::Address;
 
 use crate::utils::partition;
@@ -129,7 +129,7 @@ impl DbHashes {
     fn count_table_entries(&self, table: &str) -> rusqlite::Result<i64> {
         self.get_conn()?.query_row(
             &format!("SELECT COUNT(*) FROM {};", table),
-            NO_PARAMS,
+            [],
             |row: &rusqlite::Row| row.get(0),
         )
     }
@@ -185,7 +185,7 @@ impl DbHashes {
     pub fn count_cities(&self) -> rusqlite::Result<i64> {
         self.get_conn()?.query_row(
             &format!("SELECT COUNT(DISTINCT city) FROM {};", TABLE_ADDRESSES),
-            NO_PARAMS,
+            [],
             |row: &rusqlite::Row| row.get(0),
         )
     }
@@ -213,7 +213,7 @@ impl DbHashes {
                 ",
                 TABLE_HASHES
             ),
-            NO_PARAMS,
+            [],
             |row: &rusqlite::Row| row.get(0),
         )
     }
@@ -315,7 +315,7 @@ impl DbHashes {
                 "DELETE FROM {} WHERE id IN (SELECT address_id FROM {});",
                 TABLE_ADDRESSES, TABLE_TO_DELETE
             ),
-            NO_PARAMS,
+            [],
         )
     }
 
@@ -407,14 +407,13 @@ impl<'c, 't> Inserter<'c, 't> {
 
     /// Insert the hash of an address into the database.
     pub fn insert_hash(&mut self, address_id: i64, address_hash: i64) -> rusqlite::Result<()> {
-        self.stmt_insert_hash.execute(&[address_id, address_hash])?;
+        self.stmt_insert_hash.execute([address_id, address_hash])?;
         Ok(())
     }
 
     /// Mark an address as an address that needs to be deleted.
     pub fn insert_to_delete(&mut self, address_id: i64) -> rusqlite::Result<()> {
-        self.stmt_insert_to_delete
-            .execute(std::iter::once(address_id))?;
+        self.stmt_insert_to_delete.execute([address_id])?;
         Ok(())
     }
 }
@@ -435,7 +434,7 @@ impl<'c> AddressesIter<'c> {
         &mut self,
     ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<Address>> + '_> {
         let Self(stmt) = self;
-        stmt.query_map(NO_PARAMS, |row| row.try_into())
+        stmt.query_map([], |row| row.try_into())
     }
 }
 
@@ -466,7 +465,7 @@ impl<'c> CollisionsIter<'c> {
         let min_hash = conn
             .query_row(
                 &format!("SELECT MIN(hash) FROM {};", TABLE_HASHES),
-                NO_PARAMS,
+                [],
                 |row: &rusqlite::Row| row.get(0),
             )
             .map_err(|err| teprintln!("[WARN] Could not read min hash value: `{}`", err))
@@ -475,7 +474,7 @@ impl<'c> CollisionsIter<'c> {
         let max_hash = conn
             .query_row(
                 &format!("SELECT MAX(hash) FROM {};", TABLE_HASHES),
-                NO_PARAMS,
+                [],
                 |row: &rusqlite::Row| row.get(0),
             )
             .map_err(|err| teprintln!("[WARN] Could not read max hash value: `{}`", err))
@@ -526,7 +525,7 @@ impl<'c> CollisionsIter<'c> {
     pub fn iter(
         &mut self,
     ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<HashIterItem>> + '_> {
-        self.0.query_map(NO_PARAMS, |row| {
+        self.0.query_map([], |row| {
             Ok(HashIterItem {
                 address: row.try_into()?,
                 hash: row.get("hash")?,

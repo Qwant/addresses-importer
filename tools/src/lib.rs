@@ -1,4 +1,4 @@
-use rusqlite::{Connection, DropBehavior, Row, ToSql, NO_PARAMS};
+use rusqlite::{Connection, DropBehavior, Row, ToSql};
 use std::fs;
 
 /// Returns a `String` representing the current time under the form "HH:MM:SS".
@@ -166,9 +166,9 @@ impl DB {
             .map_err(|e| format!("failed to open SQLITE connection: {}", e))?;
 
         if remove_db_data {
-            conn.execute("DROP TABLE IF EXISTS addresses", NO_PARAMS)
+            conn.execute("DROP TABLE IF EXISTS addresses", [])
                 .expect("failed to drop addresses");
-            conn.execute("DROP TABLE IF EXISTS addresses_errors", NO_PARAMS)
+            conn.execute("DROP TABLE IF EXISTS addresses_errors", [])
                 .expect("failed to drop errors");
         }
         conn.execute(
@@ -184,7 +184,7 @@ impl DB {
                 postcode TEXT,
                 PRIMARY KEY (lat, lon, number, street, city)
             )"#,
-            NO_PARAMS,
+            [],
         )
         .map_err(|e| format!("failed to create table: {}", e))?;
         conn.execute(
@@ -200,7 +200,7 @@ impl DB {
                 postcode TEXT,
                 kind TEXT
             )"#,
-            NO_PARAMS,
+            [],
         )
         .map_err(|e| format!("failed to create error table: {}", e))?;
         Ok(DB {
@@ -485,7 +485,7 @@ impl CompatibleDB for DB {
             .prepare("SELECT COUNT(DISTINCT city) FROM addresses;")
             .expect("failed to prepare");
         let mut iter = stmt
-            .query_map(NO_PARAMS, |row| row.get(0))
+            .query_map([], |row| row.get(0))
             .expect("query_map failed");
         iter.next().expect("no count???").expect("failed")
     }
@@ -497,7 +497,7 @@ impl CompatibleDB for DB {
             .prepare("SELECT COUNT(*) FROM addresses")
             .expect("failed to prepare");
         let mut iter = stmt
-            .query_map(NO_PARAMS, |row| row.get(0))
+            .query_map([], |row| row.get(0))
             .expect("query_map failed");
         let x: i64 = iter.next().expect("no count???").expect("failed");
         x + self.buffer.len() as i64
@@ -510,7 +510,7 @@ impl CompatibleDB for DB {
             .prepare("SELECT COUNT(*) FROM addresses_errors")
             .expect("failed to prepare");
         let mut iter = stmt
-            .query_map(NO_PARAMS, |row| row.get(0))
+            .query_map([], |row| row.get(0))
             .expect("query_map failed");
         iter.next().expect("no count???").expect("failed")
     }
@@ -521,7 +521,7 @@ impl CompatibleDB for DB {
             .conn
             .prepare("SELECT kind, COUNT(*) FROM addresses_errors GROUP BY kind")
             .expect("failed to prepare");
-        stmt.query_map(NO_PARAMS, |row| Ok((row.get(0)?, row.get(1)?)))
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .expect("query_map failed")
             .map(|x| x.expect("failed"))
             .collect()
