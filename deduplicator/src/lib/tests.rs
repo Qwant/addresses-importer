@@ -5,7 +5,7 @@ use std::io::prelude::*;
 use std::path::PathBuf;
 
 use importer_openaddresses::OpenAddress;
-use rusqlite::{Connection, NO_PARAMS};
+use rusqlite::Connection;
 use tempdir::TempDir;
 use tools::{Address, CompatibleDB};
 
@@ -31,7 +31,7 @@ fn load_dump(path: PathBuf) -> rusqlite::Result<Connection> {
 fn load_addresses_from_db(conn: &Connection) -> rusqlite::Result<Vec<Address>> {
     let mut res = Vec::new();
     let mut stmt = conn.prepare("SELECT * FROM addresses;")?;
-    let iter = stmt.query_map(NO_PARAMS, |row| row.try_into())?;
+    let iter = stmt.query_map([], |row| row.try_into())?;
 
     for address in iter {
         res.push(address?);
