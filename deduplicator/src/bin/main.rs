@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use libflate::gzip;
 use structopt::StructOpt;
-use tools::{tprintln, Address};
+use tools::{teprintln, tprintln, Address};
 
 use deduplicator::{
     deduplicator::{DedupeConfig, Deduplicator},
@@ -51,7 +51,8 @@ struct Params {
     #[structopt(long, default_value = "addresses.db")]
     output_db: PathBuf,
 
-    /// Keep construction tables and the output database
+    /// Keep construction tables and the output database both at the start and the end of the
+    /// deduplication.
     #[structopt(short, long)]
     keep: bool,
 
@@ -90,6 +91,16 @@ fn main() -> rusqlite::Result<()> {
     // --- Read parameters
 
     let params = Params::from_args().cleanup_empty_paths();
+
+    if !params.keep {
+        remove_file(&params.output_db)
+            .map(|()| teprintln!("Removed {:?}", params.output_db))
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => {}
+                _ => teprintln!("Failed to remove {:?} file: {:?}", params.output_db, err),
+            })
+            .ok();
+    }
 
     let db_sources = None
         .into_iter()
@@ -171,9 +182,10 @@ fn main() -> rusqlite::Result<()> {
 
     // --- Cleanup
 
-    if !&params.keep {
+    if !params.keep {
         remove_file(&params.output_db)
-            .map_err(|_| eprintln!(r"/!\ failed to remove the working database file"))
+            .map(|()| teprintln!("Removed {:?}", params.output_db))
+            .map_err(|err| teprintln!("Failed to remove {:?}: {:?}", params.output_db, err))
             .ok();
     }
 
