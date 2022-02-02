@@ -322,7 +322,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
 
         import_first_layer = false;
 
-        if made_progress {
+        if made_progress && !pending.is_empty() {
             eprintln!(
                 "{} pending, {} deps, objs: {}",
                 pending.len(),
@@ -331,6 +331,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
             );
         } else {
             eprintln!("done");
+            break;
         }
     }
 }
