@@ -44,7 +44,7 @@ impl DbHashes {
 
         conn.execute_batch(&format!(
             "
-                CREATE TABLE IF NOT EXISTS {addresses} (
+                CREATE TABLE IF NOT EXISTS {TABLE_ADDRESSES} (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     lat         REAL NOT NULL,
                     lon         REAL NOT NULL,
@@ -58,19 +58,16 @@ impl DbHashes {
                     rank        REAL
                 );
 
-                CREATE TABLE IF NOT EXISTS {hashes} (
+                CREATE TABLE IF NOT EXISTS {TABLE_HASHES} (
                     address     INTEGER NOT NULL,
                     hash        INTEGER NOT NULL,
                     PRIMARY KEY (address, hash)
                 ) WITHOUT ROWID;
 
-                CREATE TABLE IF NOT EXISTS {to_delete} (
+                CREATE TABLE IF NOT EXISTS {TABLE_TO_DELETE} (
                     address_id  INTEGER PRIMARY KEY
                 );
-            ",
-            addresses = TABLE_ADDRESSES,
-            hashes = TABLE_HASHES,
-            to_delete = TABLE_TO_DELETE
+            "
         ))?;
 
         Ok(Self { db_path })
@@ -97,8 +94,7 @@ impl DbHashes {
     /// purposes.
     pub fn create_hashes_index(&self) -> rusqlite::Result<()> {
         self.get_conn()?.execute_batch(&format!(
-            "CREATE INDEX IF NOT EXISTS {hashes}_index ON {hashes} (hash);",
-            hashes = TABLE_HASHES
+            "CREATE INDEX IF NOT EXISTS {TABLE_HASHES}_index ON {TABLE_HASHES} (hash);"
         ))
     }
 
@@ -111,8 +107,7 @@ impl DbHashes {
         let conn = self.get_conn()?;
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT * FROM {} WHERE number=?1 AND street=?2;",
-                TABLE_ADDRESSES,
+                "SELECT * FROM {TABLE_ADDRESSES} WHERE number=?1 AND street=?2;"
             ))
             .expect("failed to prepare statement");
 
@@ -128,7 +123,7 @@ impl DbHashes {
     /// Returns the number of rows of a table.
     fn count_table_entries(&self, table: &str) -> rusqlite::Result<i64> {
         self.get_conn()?.query_row(
-            &format!("SELECT COUNT(*) FROM {};", table),
+            &format!("SELECT COUNT(*) FROM {table};"),
             [],
             |row: &rusqlite::Row| row.get(0),
         )
@@ -184,7 +179,7 @@ impl DbHashes {
     /// ```
     pub fn count_cities(&self) -> rusqlite::Result<i64> {
         self.get_conn()?.query_row(
-            &format!("SELECT COUNT(DISTINCT city) FROM {};", TABLE_ADDRESSES),
+            &format!("SELECT COUNT(DISTINCT city) FROM {TABLE_ADDRESSES};"),
             [],
             |row: &rusqlite::Row| row.get(0),
         )
@@ -206,12 +201,11 @@ impl DbHashes {
                     SELECT SUM(count)
                     FROM (
                         SELECT COUNT(*) AS count
-                        FROM {}
+                        FROM {TABLE_HASHES}
                         GROUP BY hash
                         HAVING count > 1
                     );
-                ",
-                TABLE_HASHES
+                "
             ),
             [],
             |row: &rusqlite::Row| row.get(0),
@@ -233,8 +227,8 @@ impl DbHashes {
     ///
     /// {
     ///     let addr = Address {
-    ///         number: Some("24 bis".to_string()),
-    ///         street: Some("rue des serpentins".to_string()),
+    ///         number: Some("24 bis".into()),
+    ///         street: Some("rue des serpentins".into()),
     ///         ..Address::default()
     ///     };
     ///
@@ -312,8 +306,13 @@ impl DbHashes {
     pub fn apply_addresses_to_delete(&self) -> rusqlite::Result<usize> {
         self.get_conn()?.execute(
             &format!(
-                "DELETE FROM {} WHERE id IN (SELECT address_id FROM {});",
-                TABLE_ADDRESSES, TABLE_TO_DELETE
+                "
+                    DELETE FROM {TABLE_ADDRESSES}
+                    WHERE id IN (
+                        SELECT address_id
+                        FROM {TABLE_TO_DELETE}
+                    );
+                "
             ),
             [],
         )
@@ -325,7 +324,7 @@ impl DbHashes {
         let conn = self.get_conn()?;
 
         for db in [TABLE_HASHES, TABLE_TO_DELETE] {
-            conn.execute_batch(&format!("DROP TABLE {};", db))?;
+            conn.execute_batch(&format!("DROP TABLE {db};"))?;
         }
 
         Ok(())
@@ -352,7 +351,7 @@ impl<'c, 't> Inserter<'c, 't> {
     pub fn new(tran: &'t mut Transaction<'c>) -> rusqlite::Result<Self> {
         let stmt_insert_address = tran.prepare(&format!(
             "
-                INSERT INTO {} (
+                INSERT INTO {TABLE_ADDRESSES} (
                     lat,
                     lon,
                     number,
@@ -364,18 +363,15 @@ impl<'c, 't> Inserter<'c, 't> {
                     postcode,
                     rank
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);
-            ",
-            TABLE_ADDRESSES
+            "
         ))?;
 
         let stmt_insert_hash = tran.prepare(&format!(
-            "INSERT INTO {} (address, hash) VALUES (?1, ?2);",
-            TABLE_HASHES
+            "INSERT INTO {TABLE_HASHES} (address, hash) VALUES (?1, ?2);"
         ))?;
 
         let stmt_insert_to_delete = tran.prepare(&format!(
-            "INSERT INTO {} (address_id) VALUES (?1);",
-            TABLE_TO_DELETE
+            "INSERT INTO {TABLE_TO_DELETE} (address_id) VALUES (?1);"
         ))?;
 
         Ok(Self {
@@ -393,13 +389,13 @@ impl<'c, 't> Inserter<'c, 't> {
         self.stmt_insert_address.execute(&[
             &address.lat as &dyn ToSql,
             &address.lon,
-            &address.number,
-            &address.street,
-            &address.unit,
-            &address.city,
-            &address.district,
-            &address.region,
-            &address.postcode,
+            &address.number.as_ref().map(|s| s.as_str()),
+            &address.street.as_ref().map(|s| s.as_str()),
+            &address.unit.as_ref().map(|s| s.as_str()),
+            &address.city.as_ref().map(|s| s.as_str()),
+            &address.district.as_ref().map(|s| s.as_str()),
+            &address.region.as_ref().map(|s| s.as_str()),
+            &address.postcode.as_ref().map(|s| s.as_str()),
             &rank,
         ])?;
         Ok(self.tran.last_insert_rowid())
@@ -425,7 +421,7 @@ impl<'c> AddressesIter<'c> {
     /// Request a connection for the list of addresses in the database.
     pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
         Ok(Self(
-            conn.prepare(&format!("SELECT * FROM {};", TABLE_ADDRESSES))?,
+            conn.prepare(&format!("SELECT * FROM {TABLE_ADDRESSES};"))?,
         ))
     }
 
@@ -500,13 +496,13 @@ impl<'c> CollisionsIter<'c> {
                     addr.postcode   AS postcode,
                     addr.rank       AS rank,
                     hash.hash       AS hash
-                FROM {hashes} AS hash
-                JOIN {addresses} AS addr ON hash.address = addr.id
+                FROM {TABLE_HASHES} AS hash
+                JOIN {TABLE_ADDRESSES} AS addr ON hash.address = addr.id
                 WHERE (
                     hash.hash BETWEEN {start} AND {end}
                     AND EXISTS (
                         SELECT *
-                        FROM {hashes}
+                        FROM {TABLE_HASHES}
                         WHERE hash = hash.hash AND address <> hash.address
                     )
                 )
@@ -514,8 +510,6 @@ impl<'c> CollisionsIter<'c> {
             ",
             start = part.start(),
             end = part.end(),
-            addresses = TABLE_ADDRESSES,
-            hashes = TABLE_HASHES
         );
 
         Ok(Self(conn.prepare(&query)?))

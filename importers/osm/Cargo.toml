@@ -5,9 +5,10 @@ authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
 edition = "2021"
 
 [dependencies]
+smartstring = "0.2"
 fxhash = "0.2"
 geos = "5.0"
-osmpbfreader = "0.13.4"
+osmpbfreader = "0.15"
 tools = { path = "../../tools" }
 
 [[bin]]

@@ -23,6 +23,7 @@ use fxhash::FxHashMap;
 use geos::Geometry;
 use osmpbfreader::objects::{OsmId, Tags};
 use osmpbfreader::{OsmObj, OsmPbfReader};
+use smartstring::alias::String;
 
 use tools::{teprint, tprintln, Address, CompatibleDB};
 
@@ -63,7 +64,7 @@ const MAX_VALID_HOUSENUMBER_LENGTH: usize = 8;
 ///
 /// This might evolve in the future considering that some countries use different tags to store the
 /// same information.
-fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
+fn new_address(tags: Tags, lat: f64, lon: f64) -> Address {
     let mut addr = Address {
         lat,
         lon,
@@ -76,28 +77,28 @@ fn new_address(tags: &Tags, lat: f64, lon: f64) -> Address {
         postcode: None,
     };
 
-    for (tag, value) in tags.iter() {
+    for (tag, value) in tags.into_inner() {
         match tag.as_str() {
             "addr:housenumber" => {
-                addr.number = Some(value.to_owned());
+                addr.number = Some(value);
             }
             "addr:street" => {
-                addr.street = Some(value.to_owned());
+                addr.street = Some(value);
             }
             "addr:unit" => {
-                addr.unit = Some(value.to_owned());
+                addr.unit = Some(value);
             }
             "addr:city" => {
-                addr.city = Some(value.to_owned());
+                addr.city = Some(value);
             }
             "addr:district" => {
-                addr.district = Some(value.to_owned());
+                addr.district = Some(value);
             }
             "addr:region" => {
-                addr.region = Some(value.to_owned());
+                addr.region = Some(value);
             }
             "addr:postcode" => {
-                addr.postcode = Some(value.to_owned());
+                addr.postcode = Some(value);
             }
             _ => {}
         }
@@ -321,7 +322,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
 
         import_first_layer = false;
 
-        if made_progress {
+        if made_progress && !pending.is_empty() {
             eprintln!(
                 "{} pending, {} deps, objs: {}",
                 pending.len(),
@@ -330,6 +331,7 @@ fn fetch_objects<R: BufRead + Seek, T: CompatibleDB>(
             );
         } else {
             eprintln!("done");
+            break;
         }
     }
 }
@@ -380,10 +382,13 @@ fn get_way_lat_lon(sub_objs: &[DepObj]) -> Option<(f64, f64)> {
 fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T, override_street: Option<&str>) {
     let mut address = {
         match obj.root {
-            OsmObj::Node(n) => new_address(&n.tags, n.lat(), n.lon()),
+            OsmObj::Node(n) => {
+                let (lat, lon) = (n.lat(), n.lon());
+                new_address(n.tags, lat, lon)
+            }
             OsmObj::Way(way) => {
                 if let Some((lat, lon)) = get_way_lat_lon(&obj.children) {
-                    new_address(&way.tags, lat, lon)
+                    new_address(way.tags, lat, lon)
                 } else {
                     return;
                 }
@@ -401,7 +406,7 @@ fn handle_obj<T: CompatibleDB>(obj: DepObj, db: &mut T, override_street: Option<
     };
 
     if let Some(street) = override_street {
-        address.street = Some(street.to_string());
+        address.street = Some(street.into());
     }
 
     db.insert(address);
