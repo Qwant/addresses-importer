@@ -2,8 +2,8 @@ use std::fs::{remove_file, File};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use clap::Parser;
 use libflate::gzip;
-use structopt::StructOpt;
 use tools::{teprintln, tprintln, Address};
 
 use deduplicator::{
@@ -12,52 +12,52 @@ use deduplicator::{
     utils::{load_from_sqlite, parse_duration},
 };
 
-#[derive(Debug, StructOpt)]
-#[structopt(
+#[derive(Debug, clap::Parser)]
+#[clap(
     name = "deduplicator",
     about = "Deduplicate addresses from several sources."
 )]
 struct Params {
     /// Path to data from bano
-    #[structopt(long)]
+    #[clap(long)]
     bano: Vec<PathBuf>,
 
     /// Path to data from OpenAddress
-    #[structopt(long)]
+    #[clap(long)]
     openaddresses: Vec<PathBuf>,
 
     /// Path to data from OSM
-    #[structopt(long)]
+    #[clap(long)]
     osm: Vec<PathBuf>,
 
     /// Path to data from Bano as an SQLite database
-    #[structopt(long)]
+    #[clap(long)]
     bano_db: Vec<PathBuf>,
 
     /// Path to data from OpenAddress as an SQLite database
-    #[structopt(long)]
+    #[clap(long)]
     openaddresses_db: Vec<PathBuf>,
 
     /// Path to data from OSM as an SQLite database
-    #[structopt(long)]
+    #[clap(long)]
     osm_db: Vec<PathBuf>,
 
     /// While not explicitly disabled with this flag, addresses from france are
     /// only imported from BANO sources.
-    #[structopt(long)]
+    #[clap(long)]
     skip_source_filters: bool,
 
     /// Path for output database.
-    #[structopt(long, default_value = "addresses.db")]
+    #[clap(long, default_value = "addresses.db")]
     output_db: PathBuf,
 
     /// Keep construction tables and the output database both at the start and the end of the
     /// deduplication.
-    #[structopt(short, long)]
+    #[clap(short, long)]
     keep: bool,
 
     /// Output database as an OpenAddress-like gzip CSV file
-    #[structopt(
+    #[clap(
         short,
         long = "output-compressed-csv",
         default_value = "deduplicated.csv.gz"
@@ -65,15 +65,15 @@ struct Params {
     output_csv: PathBuf,
 
     /// Number of pages to be used by SQLite (one page is 4096 bytes)
-    #[structopt(short, long, default_value = "10000")]
+    #[clap(short, long, default_value = "10000")]
     cache_size: u32,
 
     /// Number of thread to target during the computation.
-    #[structopt(short, long)]
+    #[clap(short, long)]
     num_threads: Option<usize>,
 
     /// Redraw delay for displayed progress (in ms)
-    #[structopt(long, default_value = "1000", parse(try_from_str = parse_duration))]
+    #[clap(long, default_value = "1000", parse(try_from_str = parse_duration))]
     refresh_delay: Duration,
 }
 
@@ -90,7 +90,7 @@ impl Params {
 fn main() -> rusqlite::Result<()> {
     // --- Read parameters
 
-    let params = Params::from_args().cleanup_empty_paths();
+    let params = Params::parse().cleanup_empty_paths();
 
     if !params.keep {
         remove_file(&params.output_db)

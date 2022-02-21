@@ -15,7 +15,6 @@ extern crate once_cell;
 extern crate prog_rs;
 extern crate rpostal;
 extern crate rusqlite;
-extern crate structopt;
 
 pub mod db_hashes;
 pub mod dedupe;
