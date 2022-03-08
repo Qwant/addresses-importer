@@ -225,45 +225,38 @@ impl Deduplicator {
         progress.finish();
 
         // --- Delete conflicting addresses
+        self.db.insert_to_delete(to_delete);
+        Ok(())
+    }
 
-        let mut conn = self.db.get_conn()?;
-        let mut tran_insert = conn.transaction().expect("failed to init transaction");
-        tran_insert.set_drop_behavior(DropBehavior::Commit);
-        let mut inserter =
-            DbHashes::get_inserter(&mut tran_insert).expect("failed to init inserter");
+    /// Swipe hashes from database and output stats
+    pub fn apply_deletions(&self) -> rusqlite::Result<()> {
+        self.db.cleanup_database()?;
+        let count_to_delete = self.db.count_to_delete() as i64;
 
-        for id in to_delete {
-            match inserter.insert_to_delete(id) {
-                Err(err) if !is_constraint_violation_error(&err) => {
-                    teprintln!("Failed to insert id to delete in the database: {}", err)
-                }
-                _ => {}
-            }
-        }
+        teprintln!(
+            "Deleting {} addresses ... {} will remain",
+            count_to_delete,
+            self.db.count_addresses()? - count_to_delete
+        );
 
         Ok(())
     }
 
-    /// Delete the addresses that were marked to be deleted.
-    pub fn apply_deletions(&self) -> rusqlite::Result<()> {
-        let count_to_delete = self.db.count_to_delete()?;
-        teprint!("Deleting {} addresses ...\r", count_to_delete);
-
-        self.db.apply_addresses_to_delete()?;
-        teprintln!(
-            "Deleting {} addresses ... {} remain",
-            count_to_delete,
-            self.db.count_addresses()?
-        );
-
-        Ok(())
+    pub fn collect_addresses<T>(&self) -> rusqlite::Result<T>
+    where
+        T: FromIterator<Address>,
+    {
+        let conn = self.db.get_conn()?;
+        let buff: Result<T, _> = self.db.get_addresses(&conn)?.iter()?.collect();
+        buff
     }
 
     /// Dump addresses stored in the deduplicator into OpenAddresses's CSV format.
     pub fn openaddresses_dump<W: Write>(&self, mut stream: W) -> rusqlite::Result<()> {
         // Fetch addresses
         let conn = self.db.get_conn()?;
-        let mut addresses = DbHashes::get_addresses(&conn)?;
+        let mut addresses = self.db.get_addresses(&conn)?;
 
         // Dump into stream
         {

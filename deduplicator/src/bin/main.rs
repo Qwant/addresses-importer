@@ -169,9 +169,6 @@ fn main() -> rusqlite::Result<()> {
     tprintln!("Deduplication...");
     deduplication.compute_duplicates()?;
 
-    tprintln!("Cleaning...");
-    deduplication.apply_deletions()?;
-
     // --- Dump CSV
 
     tprintln!("Write compressed CSV...");

@@ -2,7 +2,7 @@
 //! it. This database will be used to save hashes of all imported addresses and compute collisions
 //! between them.
 
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use rusqlite::{Connection, Statement, ToSql, Transaction};
 use tools::Address;
@@ -15,12 +15,10 @@ const TABLE_ADDRESSES: &str = "addresses";
 /// Name of the table containing hashes. For each address, multiple hashes may be stored.
 const TABLE_HASHES: &str = "_addresses_hashes";
 
-/// Name of the table listing addresses that have to be removed to eliminate all duplicates.
-const TABLE_TO_DELETE: &str = "_to_delete";
-
 /// A database, this structure can be used to open connections or perform high-level operations.
 pub struct DbHashes {
     db_path: PathBuf,
+    to_delete: HashSet<i64>,
 }
 
 impl DbHashes {
@@ -63,14 +61,13 @@ impl DbHashes {
                     hash        INTEGER NOT NULL,
                     PRIMARY KEY (address, hash)
                 ) WITHOUT ROWID;
-
-                CREATE TABLE IF NOT EXISTS {TABLE_TO_DELETE} (
-                    address_id  INTEGER PRIMARY KEY
-                );
             "
         ))?;
 
-        Ok(Self { db_path })
+        Ok(Self {
+            db_path,
+            to_delete: HashSet::new(),
+        })
     }
 
     /// Open a connection to the database.
@@ -162,10 +159,10 @@ impl DbHashes {
     /// use deduplicator::db_hashes::*;
     ///
     /// let db = DbHashes::new("sqlite.db".into(), None).unwrap();
-    /// assert_eq!(db.count_to_delete(), Ok(0));
+    /// assert_eq!(db.count_to_delete(), 0);
     /// ```
-    pub fn count_to_delete(&self) -> rusqlite::Result<i64> {
-        self.count_table_entries(TABLE_TO_DELETE)
+    pub fn count_to_delete(&self) -> usize {
+        self.to_delete.len()
     }
 
     /// Returns the number of cities in the database.
@@ -260,15 +257,18 @@ impl DbHashes {
     /// let db = DbHashes::new("sqlite.db".into(), None).unwrap();
     /// let mut conn = db.get_conn().unwrap();
     ///
-    /// let addresses: Vec<_> = DbHashes::get_addresses(&conn)
+    /// let addresses: Vec<_> = db.get_addresses(&conn)
     ///     .unwrap()
     ///     .iter()
     ///     .unwrap()
     ///     .map(|addr| addr.unwrap())
     ///     .collect();
     /// ```
-    pub fn get_addresses(conn: &Connection) -> rusqlite::Result<AddressesIter> {
-        AddressesIter::prepare(conn)
+    pub fn get_addresses<'c>(
+        &'c self,
+        conn: &'c Connection,
+    ) -> rusqlite::Result<AddressesIter<'c>> {
+        AddressesIter::prepare(conn, &self.to_delete)
     }
 
     /// Get an iterable over hashes in the database that explicit a collision. The results are
@@ -302,32 +302,15 @@ impl DbHashes {
         CollisionsIter::prepare(conn, part, nb_parts)
     }
 
-    /// Apply deletions of addresses listed in the table of addresses that have to be deleted.
-    pub fn apply_addresses_to_delete(&self) -> rusqlite::Result<usize> {
-        self.get_conn()?.execute(
-            &format!(
-                "
-                    DELETE FROM {TABLE_ADDRESSES}
-                    WHERE id IN (
-                        SELECT address_id
-                        FROM {TABLE_TO_DELETE}
-                    );
-                "
-            ),
-            [],
-        )
+    pub fn insert_to_delete(&mut self, to_delete: impl IntoIterator<Item = i64>) {
+        self.to_delete.extend(to_delete)
     }
 
     /// Drop construction tables from the database. This will apply to the table containing hashes
     /// and the table containing addresses that have to be deleted.
     pub fn cleanup_database(&self) -> rusqlite::Result<()> {
         let conn = self.get_conn()?;
-
-        for db in [TABLE_HASHES, TABLE_TO_DELETE] {
-            conn.execute_batch(&format!("DROP TABLE {db};"))?;
-        }
-
-        Ok(())
+        conn.execute_batch(&format!("DROP TABLE {TABLE_HASHES};"))
     }
 
     /// Vacuum the database. Note that this function will have to be called after
@@ -343,7 +326,6 @@ pub struct Inserter<'c, 't> {
     tran: &'t Transaction<'c>,
     stmt_insert_address: Statement<'t>,
     stmt_insert_hash: Statement<'t>,
-    stmt_insert_to_delete: Statement<'t>,
 }
 
 impl<'c, 't> Inserter<'c, 't> {
@@ -370,15 +352,10 @@ impl<'c, 't> Inserter<'c, 't> {
             "INSERT INTO {TABLE_HASHES} (address, hash) VALUES (?1, ?2);"
         ))?;
 
-        let stmt_insert_to_delete = tran.prepare(&format!(
-            "INSERT INTO {TABLE_TO_DELETE} (address_id) VALUES (?1);"
-        ))?;
-
         Ok(Self {
             tran,
             stmt_insert_address,
             stmt_insert_hash,
-            stmt_insert_to_delete,
         })
     }
 
@@ -406,31 +383,44 @@ impl<'c, 't> Inserter<'c, 't> {
         self.stmt_insert_hash.execute([address_id, address_hash])?;
         Ok(())
     }
-
-    /// Mark an address as an address that needs to be deleted.
-    pub fn insert_to_delete(&mut self, address_id: i64) -> rusqlite::Result<()> {
-        self.stmt_insert_to_delete.execute([address_id])?;
-        Ok(())
-    }
 }
 
 /// An iterable over the addresses of a database.
-pub struct AddressesIter<'c>(Statement<'c>);
+pub struct AddressesIter<'c> {
+    stmt: Statement<'c>,
+    skip: &'c HashSet<i64>,
+}
 
 impl<'c> AddressesIter<'c> {
     /// Request a connection for the list of addresses in the database.
-    pub fn prepare(conn: &'c Connection) -> rusqlite::Result<Self> {
-        Ok(Self(
-            conn.prepare(&format!("SELECT * FROM {TABLE_ADDRESSES};"))?,
-        ))
+    pub fn prepare(conn: &'c Connection, skip: &'c HashSet<i64>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            stmt: conn.prepare(&format!("SELECT * FROM {TABLE_ADDRESSES};"))?,
+            skip,
+        })
     }
 
     /// Iterate over the list of result addresses.
     pub fn iter(
         &mut self,
     ) -> rusqlite::Result<impl Iterator<Item = rusqlite::Result<Address>> + '_> {
-        let Self(stmt) = self;
-        stmt.query_map([], |row| row.try_into())
+        let iter = self
+            .stmt
+            .query_map([], |row| Ok((row.get(0)?, row.try_into()?)))?
+            .filter_map(|res| {
+                let (id, addr) = match res {
+                    Ok(x) => x,
+                    Err(err) => return Some(Err(err)),
+                };
+
+                if self.skip.contains(&id) {
+                    None
+                } else {
+                    Some(Ok(addr))
+                }
+            });
+
+        Ok(iter)
     }
 }
 
