@@ -230,7 +230,7 @@ impl Deduplicator {
     }
 
     /// Swipe hashes from database and output stats
-    pub fn apply_deletions(&self) -> rusqlite::Result<()> {
+    pub fn cleanup_database(&self) -> rusqlite::Result<()> {
         self.db.cleanup_database()?;
         let count_to_delete = self.db.count_to_delete() as i64;
 
@@ -476,22 +476,10 @@ where
             .expect("failed sending address: channel may have closed too early")
     }
 
-    fn get_nb_cities(&mut self) -> i64 {
-        self.borrow_db(|db| db.count_cities())
-            .map_err(|err| eprintln!("Failed counting cities: '{}'", err))
-            .unwrap_or(0)
-    }
-
     fn get_nb_addresses(&mut self) -> i64 {
         self.flush()
             .expect("failed flushing before counting addresses");
         self.count_addresses
-    }
-
-    fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address> {
-        self.borrow_db(|db| db.get_addresses_by_street(housenumber, street))
-            .map_err(|err| eprintln!("Error while retrieving addresses by street: '{}'", err))
-            .unwrap_or_default()
     }
 
     // Current implementation for the deduplication actually doesn't log errors.

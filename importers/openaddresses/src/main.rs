@@ -12,9 +12,8 @@ fn main() {
     openaddresses::import_addresses(&args[1], &mut db);
 
     tprintln!(
-        "Got {} addresses in {} cities (and {} errors)",
+        "Got {} addresses (and {} errors)",
         db.get_nb_addresses(),
-        db.get_nb_cities(),
         db.get_nb_errors(),
     );
 

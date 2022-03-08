@@ -79,7 +79,7 @@ fn database_complete() -> rusqlite::Result<()> {
     )?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
-    dedupe.apply_deletions()?;
+    dedupe.cleanup_database()?;
 
     // Read output database
     let output_addresses = dedupe.collect_addresses()?;
@@ -108,7 +108,7 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
     }
 
     dedupe.compute_duplicates()?;
-    dedupe.apply_deletions()?;
+    dedupe.cleanup_database()?;
 
     // Read output database
     let output_addresses = dedupe.collect_addresses()?;
@@ -132,7 +132,7 @@ fn remove_close_duplicates() -> rusqlite::Result<()> {
     )?;
     insert_addresses(&mut dedupe, input_addresses)?;
     dedupe.compute_duplicates()?;
-    dedupe.apply_deletions()?;
+    dedupe.cleanup_database()?;
 
     // Read output database
     let output_addresses: Vec<_> = dedupe.collect_addresses()?;

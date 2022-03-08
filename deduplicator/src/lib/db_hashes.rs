@@ -23,6 +23,8 @@ pub struct DbHashes {
 
 impl DbHashes {
     /// Instantiate a new database from a path to an SQLite file.
+    /// The handler optionally contains a buffer for addresses that should be removed, which
+    /// reflects the output of get_addresses()?.iter().
     ///
     /// If the file is not created yet or if the schema is not already set up, this will be done.
     ///
@@ -95,28 +97,6 @@ impl DbHashes {
         ))
     }
 
-    /// Return a list of addresses matching an input house number and street name.
-    pub fn get_addresses_by_street(
-        &self,
-        housenumber: i32,
-        street: &str,
-    ) -> rusqlite::Result<Vec<Address>> {
-        let conn = self.get_conn()?;
-        let mut stmt = conn
-            .prepare(&format!(
-                "SELECT * FROM {TABLE_ADDRESSES} WHERE number=?1 AND street=?2;"
-            ))
-            .expect("failed to prepare statement");
-
-        let mut addr_iter =
-            stmt.query_map(&[&housenumber, &street as &dyn ToSql], |row| row.try_into())?;
-
-        addr_iter.try_fold(Vec::new(), |mut acc, addr| {
-            acc.push(addr?);
-            Ok(acc)
-        })
-    }
-
     /// Returns the number of rows of a table.
     fn count_table_entries(&self, table: &str) -> rusqlite::Result<i64> {
         self.get_conn()?.query_row(
@@ -163,23 +143,6 @@ impl DbHashes {
     /// ```
     pub fn count_to_delete(&self) -> usize {
         self.to_delete.len()
-    }
-
-    /// Returns the number of cities in the database.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use deduplicator::db_hashes::*;
-    ///
-    /// let db = DbHashes::new("sqlite.db".into(), None).unwrap();
-    /// assert_eq!(db.count_cities(), Ok(0));
-    /// ```
-    pub fn count_cities(&self) -> rusqlite::Result<i64> {
-        self.get_conn()?.query_row(
-            &format!("SELECT COUNT(DISTINCT city) FROM {TABLE_ADDRESSES};"),
-            [],
-            |row: &rusqlite::Row| row.get(0),
-        )
     }
 
     /// Count the number of pairs (address, hash) that are in collision with another.

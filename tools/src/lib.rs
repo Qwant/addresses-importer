@@ -350,29 +350,6 @@ pub trait CompatibleDB {
     /// });
     /// ```
     fn insert(&mut self, addr: Address);
-    /// Counts the number of different inserted cities.
-    ///
-    /// Example:
-    ///
-    /// ```no_run
-    /// use tools::{Address, CompatibleDB, DB};
-    ///
-    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
-    /// assert_eq!(db.get_nb_cities(), 0);
-    /// db.insert(Address {
-    ///     lat: 0.,
-    ///     lon: 0.,
-    ///     number: Some("12".into()),
-    ///     street: Some("rue des champignons".into()),
-    ///     unit: None,
-    ///     city: Some("Paris".into()),
-    ///     district: None,
-    ///     region: None,
-    ///     postcode: None,
-    /// });
-    /// assert_eq!(db.get_nb_cities(), 1);
-    /// ```
-    fn get_nb_cities(&mut self) -> i64;
     /// Counts the number of inserted addresses.
     ///
     /// Example:
@@ -445,40 +422,6 @@ pub trait CompatibleDB {
     /// assert_eq!(db.get_nb_by_errors_kind(), vec![("Missing mandataory field".into(), 1)]);
     /// ```
     fn get_nb_by_errors_kind(&mut self) -> Vec<(std::string::String, i64)>;
-    /// Returns a list of addresses matching the given housenumber and street name.
-    ///
-    /// Example:
-    ///
-    /// ```no_run
-    /// use tools::{Address, CompatibleDB, DB};
-    ///
-    /// let mut db = DB::new("addresses.db", 10000, true).expect("failed to create DB");
-    /// assert_eq!(db.get_nb_addresses(), 0);
-    /// db.insert(Address {
-    ///     lat: 0.,
-    ///     lon: 0.,
-    ///     number: Some("12".into()),
-    ///     street: Some("rue des champignons".into()),
-    ///     unit: None,
-    ///     city: None,
-    ///     district: None,
-    ///     region: None,
-    ///     postcode: None,
-    /// });
-    /// assert_eq!(db.get_address(12, "rue des champignons"),
-    ///            vec![Address {
-    ///                 lat: 0.,
-    ///                 lon: 0.,
-    ///                 number: Some("12".into()),
-    ///                 street: Some("rue des champignons".into()),
-    ///                 unit: None,
-    ///                 city: None,
-    ///                 district: None,
-    ///                 region: None,
-    ///                 postcode: None,
-    ///             }]);
-    /// ```
-    fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address>;
 }
 
 impl CompatibleDB for DB {
@@ -490,18 +433,6 @@ impl CompatibleDB for DB {
         if self.buffer.len() >= self.db_buffer_size {
             self.flush();
         }
-    }
-
-    fn get_nb_cities(&mut self) -> i64 {
-        self.flush();
-        let mut stmt = self
-            .conn
-            .prepare("SELECT COUNT(DISTINCT city) FROM addresses;")
-            .expect("failed to prepare");
-        let mut iter = stmt
-            .query_map([], |row| row.get(0))
-            .expect("query_map failed");
-        iter.next().expect("no count???").expect("failed")
     }
 
     fn get_nb_addresses(&mut self) -> i64 {
@@ -538,17 +469,6 @@ impl CompatibleDB for DB {
         stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .expect("query_map failed")
             .map(|x| x.expect("failed"))
-            .collect()
-    }
-
-    fn get_address(&mut self, housenumber: i32, street: &str) -> Vec<Address> {
-        self.flush();
-        let mut stmt = self.conn
-            .prepare("SELECT lat, lon, number, street, unit, city, district, region, postcode FROM addresses WHERE number=?1 AND street=?2")
-            .expect("failed to prepare statement");
-        stmt.query_map(&[&housenumber as &dyn ToSql, &street], |row| row.try_into())
-            .expect("failed to insert into errors")
-            .map(|x| x.expect("failed parsing address"))
             .collect()
     }
 }
