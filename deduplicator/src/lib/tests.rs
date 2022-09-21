@@ -4,10 +4,9 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
-use importer_openaddresses::OpenAddress;
 use rusqlite::Connection;
 use tempdir::TempDir;
-use tools::{Address, CompatibleDB};
+use tools::{Address, CompatibleDB, OpenAddressLegacy};
 
 use crate::deduplicator::{DedupeConfig, Deduplicator};
 use crate::utils::partition;
@@ -54,15 +53,15 @@ fn insert_addresses(
     Ok(())
 }
 
-fn assert_same_addresses(mut addresses_1: Vec<Address>, mut addresses_2: Vec<Address>) {
+fn assert_same_addresses<A: Into<Address>, B: Into<Address>>(
+    addresses_1: Vec<A>,
+    addresses_2: Vec<B>,
+) {
+    let mut addresses_1: Vec<Address> = addresses_1.into_iter().map(Into::into).collect();
+    let mut addresses_2: Vec<Address> = addresses_2.into_iter().map(Into::into).collect();
     addresses_1.sort_by(|addr_1, addr_2| addr_1.partial_cmp(addr_2).unwrap());
     addresses_2.sort_by(|addr_1, addr_2| addr_1.partial_cmp(addr_2).unwrap());
-
-    assert_eq!(addresses_1.len(), addresses_2.len());
-
-    for (addr_1, addr_2) in addresses_1.into_iter().zip(addresses_2) {
-        assert_eq!(addr_1, addr_2);
-    }
+    assert_eq!(addresses_1, addresses_2);
 }
 
 /// Check that no item is removed from a database without duplicates.
@@ -169,13 +168,8 @@ fn csv_is_complete() -> rusqlite::Result<()> {
     // Read output CSV
     let csv_file = File::open(&output_csv_path).unwrap();
     let mut reader = csv::Reader::from_reader(csv_file);
-    let csv_addresses = reader
-        .deserialize()
-        .map(|line| {
-            let open_address: OpenAddress = line.unwrap();
-            open_address.into()
-        })
-        .collect();
+    let csv_addresses: Vec<OpenAddressLegacy> =
+        reader.deserialize().map(|line| line.unwrap()).collect();
 
     // Compare results
     assert_same_addresses(output_addresses, csv_addresses);

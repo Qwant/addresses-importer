@@ -3,36 +3,43 @@ use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::Path;
 
-use csv::Reader;
+use serde::Deserialize;
 use smartstring::alias::String;
 use tools::{teprint, teprintln, tprintln, Address, CompatibleDB};
 
-use serde::{Deserialize, Serialize};
-
 /// Size of the read buffer put on top of the input CSV file
-const CSV_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
+const GJ_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
-/// We store the CSV lines in this struct using `serde`. It allows to have
-/// very straightforward code. All the fields are representation of what can be
-/// encountered in **OpenAddresses** CSV files. If not, then the file is
-/// invalid.
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub struct OpenAddress {
-    pub id: String,
-    pub street: String,
-    pub postcode: String,
-    pub district: String,
-    pub region: String,
-    pub city: String,
-    pub number: String,
-    pub unit: String,
-    pub lat: f64,
-    pub lon: f64,
+/// Subset of a Geojson Feature, expected to contain a point.
+#[derive(Deserialize)]
+pub struct OpenAddressFeature {
+    // pub type: String,
+    properties: OpenAddressProperties,
+    geometry: OpenAddressGeometry,
 }
 
-impl From<OpenAddress> for Address {
-    fn from(val: OpenAddress) -> Self {
+/// Subset of a geojson geometry, expected to be a point
+#[derive(Deserialize)]
+pub struct OpenAddressGeometry {
+    // pub type: String,
+    pub coordinates: [f64; 2],
+}
+
+#[derive(Deserialize)]
+pub struct OpenAddressProperties {
+    // pub hash: String,
+    // pub id: String,
+    pub number: String,
+    pub street: String,
+    pub unit: String,
+    pub city: String,
+    pub district: String,
+    pub region: String,
+    pub postcode: String,
+}
+
+impl From<OpenAddressFeature> for Address {
+    fn from(val: OpenAddressFeature) -> Self {
         let filter_empty = |field: String| {
             if field.is_empty() {
                 None
@@ -41,33 +48,19 @@ impl From<OpenAddress> for Address {
             }
         };
 
-        Address {
-            lat: val.lat,
-            lon: val.lon,
-            number: filter_empty(val.number),
-            street: filter_empty(val.street),
-            unit: filter_empty(val.unit),
-            city: filter_empty(val.city),
-            district: filter_empty(val.district),
-            region: filter_empty(val.region),
-            postcode: filter_empty(val.postcode),
-        }
-    }
-}
+        let [lon, lat] = val.geometry.coordinates;
+        let props = val.properties;
 
-impl From<Address> for OpenAddress {
-    fn from(address: Address) -> Self {
-        OpenAddress {
-            lat: address.lat,
-            lon: address.lon,
-            number: address.number.unwrap_or_default(),
-            street: address.street.unwrap_or_default(),
-            unit: address.unit.unwrap_or_default(),
-            city: address.city.unwrap_or_default(),
-            district: address.district.unwrap_or_default(),
-            region: address.region.unwrap_or_default(),
-            postcode: address.postcode.unwrap_or_default(),
-            id: String::new(),
+        Address {
+            lat,
+            lon,
+            number: filter_empty(props.number),
+            street: filter_empty(props.street),
+            unit: filter_empty(props.unit),
+            city: filter_empty(props.city),
+            district: filter_empty(props.district),
+            region: filter_empty(props.region),
+            postcode: filter_empty(props.postcode),
         }
     }
 }
@@ -76,13 +69,13 @@ impl From<Address> for OpenAddress {
 /// `import_addresses` function. It simply reads it and fills the `db` object.
 fn read_csv<P: AsRef<Path>, T: CompatibleDB>(db: &mut T, file_path: P) {
     let file = BufReader::with_capacity(
-        CSV_BUFFER_SIZE,
+        GJ_BUFFER_SIZE,
         File::open(&file_path).expect("cannot open file"),
     );
 
-    let mut rdr = Reader::from_reader(file);
+    let rdr = serde_json::Deserializer::from_reader(file);
 
-    for address in rdr.deserialize::<OpenAddress>() {
+    for address in rdr.into_iter::<OpenAddressFeature>() {
         match address {
             Ok(address) => db.insert(address.into()),
             Err(err) => teprintln!(
@@ -128,7 +121,7 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(base_path: P, db: &mut 
                         .ok()
                 })
                 .for_each(|item| todo.push(item.path()));
-        } else if path.extension().unwrap_or_else(|| OsStr::new("")) == "csv" {
+        } else if path.extension().unwrap_or_else(|| OsStr::new("")) == "geojson" {
             let short_name = path.strip_prefix(&base_path).unwrap_or(&path);
             teprint!("[OA] Reading {:<40} ...\r", short_name.display());
             read_csv(db, &path);
@@ -150,4 +143,27 @@ pub fn import_addresses<P: AsRef<Path>, T: CompatibleDB>(base_path: P, db: &mut 
         count_after - count_before,
         count_after
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tools::*;
+
+    #[test]
+    fn check_relations() {
+        let db_file = "check_relations.db";
+        let mut db = DB::new(db_file, 0, true).expect("Failed to initialize DB");
+
+        let gj_file = "data/sample.geojson";
+        import_addresses(gj_file, &mut db);
+        assert_eq!(db.get_nb_addresses(), 1000);
+
+        let addr = db.get_address(38, "Allee du Chalam");
+        assert_eq!(addr.len(), 1);
+        assert_eq!(addr[0].lon, 5.802057);
+        assert_eq!(addr[0].lat, 46.142921);
+
+        let _ = std::fs::remove_file(db_file); // we ignore any potential error
+    }
 }

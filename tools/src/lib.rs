@@ -1,4 +1,5 @@
 use rusqlite::{Connection, DropBehavior, Row, ToSql};
+use serde::{Deserialize, Serialize};
 use smartstring::alias::String;
 use std::fs;
 
@@ -141,6 +142,63 @@ impl<'r> TryFrom<&Row<'r>> for Address {
             region: get_string("region")?,
             postcode: get_string("postcode")?,
         })
+    }
+}
+
+/// Legacy OpenAddress CSV format
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub struct OpenAddressLegacy {
+    pub id: String,
+    pub street: String,
+    pub postcode: String,
+    pub district: String,
+    pub region: String,
+    pub city: String,
+    pub number: String,
+    pub unit: String,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+impl From<Address> for OpenAddressLegacy {
+    fn from(address: Address) -> Self {
+        Self {
+            lat: address.lat,
+            lon: address.lon,
+            number: address.number.unwrap_or_default(),
+            street: address.street.unwrap_or_default(),
+            unit: address.unit.unwrap_or_default(),
+            city: address.city.unwrap_or_default(),
+            district: address.district.unwrap_or_default(),
+            region: address.region.unwrap_or_default(),
+            postcode: address.postcode.unwrap_or_default(),
+            id: String::new(),
+        }
+    }
+}
+
+impl From<OpenAddressLegacy> for Address {
+    fn from(val: OpenAddressLegacy) -> Self {
+        let filter_empty = |field: String| {
+            if field.is_empty() {
+                None
+            } else {
+                Some(field)
+            }
+        };
+
+        Self {
+            lat: val.lat,
+            lon: val.lon,
+            number: filter_empty(val.number),
+            street: filter_empty(val.street),
+            unit: filter_empty(val.unit),
+            city: filter_empty(val.city),
+            district: filter_empty(val.district),
+            region: filter_empty(val.region),
+            postcode: filter_empty(val.postcode),
+        }
     }
 }
 

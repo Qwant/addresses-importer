@@ -635,6 +635,7 @@ version = "0.1.0"
 dependencies = [
  "csv",
  "serde",
+ "serde_json",
  "smartstring",
  "tools",
 ]
