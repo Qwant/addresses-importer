@@ -7,12 +7,11 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel as channel;
-use importer_openaddresses::OpenAddress;
 use itertools::Itertools;
 use prog_rs::prelude::*;
 use prog_rs::StepProgress;
 use rusqlite::DropBehavior;
-use tools::Address;
+use tools::{Address, OpenAddressLegacy};
 
 use crate::db_hashes::DbHashes;
 use crate::dedupe::{hash_address, is_duplicate};
@@ -141,7 +140,7 @@ impl Deduplicator {
 
                             for item in pack.iter().take(10) {
                                 writer
-                                    .serialize(OpenAddress::from(item.address.clone()))
+                                    .serialize(OpenAddressLegacy::from(item.address.clone()))
                                     .ok();
                             }
 
@@ -271,7 +270,7 @@ impl Deduplicator {
 
             for address in addresses.iter()? {
                 writer
-                    .serialize(OpenAddress::from(address?))
+                    .serialize(OpenAddressLegacy::from(address?))
                     .unwrap_or_else(|err| teprintln!("Failed to write address: {}", err));
             }
 
