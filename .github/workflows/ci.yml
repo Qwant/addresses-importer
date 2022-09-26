@@ -83,7 +83,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Docker build
+      - name: Docker build (libpostal)
+        run: |
+          docker build -f Dockerfile-libpostal --label "org.label-schema.vcs-ref=$GITHUB_SHA" -t qwantresearch/libpostal .
+
+      - name: Docker build (addresses-importer)
         run: |
           docker build --label "org.label-schema.vcs-ref=$GITHUB_SHA" -t qwantresearch/addresses-importer .
 
@@ -94,7 +98,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker push
+      - name: Docker push (libpostal)
+        if: github.ref == 'refs/heads/master'
+        run: |
+          docker push qwantresearch/libpostal
+
+      - name: Docker push (addersses-importer)
         if: github.ref == 'refs/heads/master'
         run: |
           docker push qwantresearch/addresses-importer
