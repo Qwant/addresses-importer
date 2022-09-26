@@ -68,7 +68,6 @@ fn assert_same_addresses<A: Into<Address>, B: Into<Address>>(
 #[test]
 fn database_complete() -> rusqlite::Result<()> {
     let tmp_dir = TempDir::new("output").unwrap();
-    let output_path = tmp_dir.path().join("addresses.db");
 
     // Read input database
     let input_addresses = load_addresses_from_db(&load_dump(DB_NO_DUPES.into())?)?;
@@ -79,10 +78,10 @@ fn database_complete() -> rusqlite::Result<()> {
     )?;
     insert_addresses(&mut dedupe, input_addresses.clone())?;
     dedupe.compute_duplicates()?;
-    dedupe.apply_deletions()?;
+    dedupe.cleanup_database()?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+    let output_addresses = dedupe.collect_addresses()?;
 
     // Compare results
     assert_same_addresses(input_addresses, output_addresses);
@@ -93,7 +92,6 @@ fn database_complete() -> rusqlite::Result<()> {
 #[test]
 fn remove_exact_duplicates() -> rusqlite::Result<()> {
     let tmp_dir = TempDir::new("output").unwrap();
-    let output_path = tmp_dir.path().join("addresses.db");
 
     // Read input database
     let input_addresses = load_addresses_from_db(&load_dump(DB_NO_DUPES.into())?)?;
@@ -109,10 +107,10 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
     }
 
     dedupe.compute_duplicates()?;
-    dedupe.apply_deletions()?;
+    dedupe.cleanup_database()?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+    let output_addresses = dedupe.collect_addresses()?;
 
     // Compare results
     assert_same_addresses(input_addresses, output_addresses);
@@ -123,7 +121,6 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
 #[test]
 fn remove_close_duplicates() -> rusqlite::Result<()> {
     let tmp_dir = TempDir::new("output").unwrap();
-    let output_path = tmp_dir.path().join("addresses.db");
 
     // Read input database
     let input_addresses = load_addresses_from_db(&load_dump(DB_WITH_DUPES.into())?)?;
@@ -134,10 +131,10 @@ fn remove_close_duplicates() -> rusqlite::Result<()> {
     )?;
     insert_addresses(&mut dedupe, input_addresses)?;
     dedupe.compute_duplicates()?;
-    dedupe.apply_deletions()?;
+    dedupe.cleanup_database()?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+    let output_addresses: Vec<_> = dedupe.collect_addresses()?;
     assert_eq!(output_addresses.len(), 10);
     Ok(())
 }
