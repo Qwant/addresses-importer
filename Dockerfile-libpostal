@@ -1,8 +1,8 @@
-FROM debian:stretch-slim
+FROM debian:bullseye-slim
 
 WORKDIR /srv/libpostal
 
-ENV LIBPOSTAL_COMMIT "95f31de3b25eaf0b23c8efd97b1243d9d690ba58"
+ENV LIBPOSTAL_COMMIT "92f504c8c97cb9b97005bdca128c6299fdcbf4b0"
 
 RUN apt-get update
 RUN apt-get install -y git autoconf libtool build-essential curl libgeos-dev libsqlite3-dev

@@ -15,7 +15,7 @@ RUN cd deduplicator && cargo build --release
 RUN rm /usr/local/lib/libpostal.so
 
 
-FROM remidupre/libpostal
+FROM qwantresearch/libpostal
 
 WORKDIR /srv
 
