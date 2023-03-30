@@ -18,8 +18,8 @@ codegen-units = 1
 [dependencies]
 crossbeam-channel = "0.5"
 csv = "1.1"
-geo = "0.18"
-geojson = { version = "0.22", features = ["geo-types"] }
+geo = "0.24"
+geojson = { version = "0.24", features = ["geo-types"] }
 importer_bano = { path = "../importers/bano", package = "bano" }
 importer_openaddresses = { path = "../importers/openaddresses", package = "openaddresses" }
 importer_osm = { path = "../importers/osm", package = "osm-addresses" }
