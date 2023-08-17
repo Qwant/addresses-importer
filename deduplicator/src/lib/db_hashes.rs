@@ -37,10 +37,10 @@ impl DbHashes {
         let conn = Connection::open(&db_path)?;
         let cache_size = cache_size.unwrap_or(10_000);
 
-        conn.pragma_update(None, "page_size", &4096)?;
-        conn.pragma_update(None, "cache_size", &cache_size)?;
-        conn.pragma_update(None, "synchronous", &"OFF")?;
-        conn.pragma_update(None, "journal_mode", &"OFF")?;
+        conn.pragma_update(None, "page_size", 4096)?;
+        conn.pragma_update(None, "cache_size", cache_size)?;
+        conn.pragma_update(None, "synchronous", "OFF")?;
+        conn.pragma_update(None, "journal_mode", "OFF")?;
 
         conn.execute_batch(&format!(
             "
@@ -112,7 +112,7 @@ impl DbHashes {
             .expect("failed to prepare statement");
 
         let mut addr_iter =
-            stmt.query_map(&[&housenumber, &street as &dyn ToSql], |row| row.try_into())?;
+            stmt.query_map([&housenumber, &street as &dyn ToSql], |row| row.try_into())?;
 
         addr_iter.try_fold(Vec::new(), |mut acc, addr| {
             acc.push(addr?);
@@ -386,7 +386,7 @@ impl<'c, 't> Inserter<'c, 't> {
     /// which address of a duplicated pair will be eliminated. When a duplicate is found, the
     /// address with a greater rank is kept.
     pub fn insert_address(&mut self, address: &Address, rank: f64) -> rusqlite::Result<i64> {
-        self.stmt_insert_address.execute(&[
+        self.stmt_insert_address.execute([
             &address.lat as &dyn ToSql,
             &address.lon,
             &address.number.as_ref().map(|s| s.as_str()),
