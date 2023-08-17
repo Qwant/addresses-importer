@@ -82,7 +82,7 @@ fn database_complete() -> rusqlite::Result<()> {
     dedupe.apply_deletions()?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+    let output_addresses = load_addresses_from_db(&Connection::open(output_path)?)?;
 
     // Compare results
     assert_same_addresses(input_addresses, output_addresses);
@@ -112,7 +112,7 @@ fn remove_exact_duplicates() -> rusqlite::Result<()> {
     dedupe.apply_deletions()?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+    let output_addresses = load_addresses_from_db(&Connection::open(output_path)?)?;
 
     // Compare results
     assert_same_addresses(input_addresses, output_addresses);
@@ -137,7 +137,7 @@ fn remove_close_duplicates() -> rusqlite::Result<()> {
     dedupe.apply_deletions()?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+    let output_addresses = load_addresses_from_db(&Connection::open(output_path)?)?;
     assert_eq!(output_addresses.len(), 10);
     Ok(())
 }
@@ -163,7 +163,7 @@ fn csv_is_complete() -> rusqlite::Result<()> {
     dedupe.openaddresses_dump(file)?;
 
     // Read output database
-    let output_addresses = load_addresses_from_db(&Connection::open(&output_path)?)?;
+    let output_addresses = load_addresses_from_db(&Connection::open(output_path)?)?;
 
     // Read output CSV
     let csv_file = File::open(&output_csv_path).unwrap();
