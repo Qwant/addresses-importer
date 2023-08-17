@@ -426,7 +426,8 @@ where
         self.addr_sender = None;
 
         // Wait for writer thread to finish writing if any
-        std::mem::replace(&mut self.writer_thread, None)
+        self.writer_thread
+            .take()
             .map(|writer_thread| writer_thread.join().expect("failed to join writer thread"))
     }
 
