@@ -722,7 +722,7 @@ dependencies = [
  "protobuf",
  "protobuf-codegen-pure",
  "pub-iterator-type",
- "self_cell",
+ "self_cell 0.10.3",
  "serde",
  "smartstring",
 ]
@@ -964,9 +964,18 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 
 [[package]]
 name = "self_cell"
-version = "0.10.2"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ef965a420fe14fdac7dd018862966a4c14094f900e1650bbc71ddd7d580c8af"
+checksum = "e14e4d63b804dc0c7ec4a1e52bcb63f02c7ac94476755aa579edac21e01f915d"
+dependencies = [
+ "self_cell 1.0.2",
+]
+
+[[package]]
+name = "self_cell"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e388332cd64eb80cd595a00941baf513caffae8dce9cfd0467fc9c66397dade6"
 
 [[package]]
 name = "semver"
